@@ -1,0 +1,52 @@
+/**
+ * Hand21 skeleton configuration
+ * 21 keypoints for hand pose estimation
+ */
+
+export const hand21 = {
+  keypoint_info: {
+    0: { name: 'wrist', id: 0, color: [255, 128, 0] },
+    1: { name: 'thumb_1', id: 1, color: [255, 128, 0] },
+    2: { name: 'thumb_2', id: 2, color: [255, 128, 0] },
+    3: { name: 'thumb_3', id: 3, color: [255, 128, 0] },
+    4: { name: 'thumb_4', id: 4, color: [255, 128, 0] },
+    5: { name: 'forefinger_1', id: 5, color: [255, 128, 0] },
+    6: { name: 'forefinger_2', id: 6, color: [255, 128, 0] },
+    7: { name: 'forefinger_3', id: 7, color: [255, 128, 0] },
+    8: { name: 'forefinger_4', id: 8, color: [255, 128, 0] },
+    9: { name: 'middle_finger_1', id: 9, color: [255, 128, 0] },
+    10: { name: 'middle_finger_2', id: 10, color: [255, 128, 0] },
+    11: { name: 'middle_finger_3', id: 11, color: [255, 128, 0] },
+    12: { name: 'middle_finger_4', id: 12, color: [255, 128, 0] },
+    13: { name: 'ring_finger_1', id: 13, color: [255, 128, 0] },
+    14: { name: 'ring_finger_2', id: 14, color: [255, 128, 0] },
+    15: { name: 'ring_finger_3', id: 15, color: [255, 128, 0] },
+    16: { name: 'ring_finger_4', id: 16, color: [255, 128, 0] },
+    17: { name: 'pinky_finger_1', id: 17, color: [255, 128, 0] },
+    18: { name: 'pinky_finger_2', id: 18, color: [255, 128, 0] },
+    19: { name: 'pinky_finger_3', id: 19, color: [255, 128, 0] },
+    20: { name: 'pinky_finger_4', id: 20, color: [255, 128, 0] },
+  },
+  skeleton_info: {
+    0: { link: ['wrist', 'thumb_1'], color: [255, 128, 0] },
+    1: { link: ['thumb_1', 'thumb_2'], color: [255, 128, 0] },
+    2: { link: ['thumb_2', 'thumb_3'], color: [255, 128, 0] },
+    3: { link: ['thumb_3', 'thumb_4'], color: [255, 128, 0] },
+    4: { link: ['wrist', 'forefinger_1'], color: [255, 128, 0] },
+    5: { link: ['forefinger_1', 'forefinger_2'], color: [255, 128, 0] },
+    6: { link: ['forefinger_2', 'forefinger_3'], color: [255, 128, 0] },
+    7: { link: ['forefinger_3', 'forefinger_4'], color: [255, 128, 0] },
+    8: { link: ['wrist', 'middle_finger_1'], color: [255, 128, 0] },
+    9: { link: ['middle_finger_1', 'middle_finger_2'], color: [255, 128, 0] },
+    10: { link: ['middle_finger_2', 'middle_finger_3'], color: [255, 128, 0] },
+    11: { link: ['middle_finger_3', 'middle_finger_4'], color: [255, 128, 0] },
+    12: { link: ['wrist', 'ring_finger_1'], color: [255, 128, 0] },
+    13: { link: ['ring_finger_1', 'ring_finger_2'], color: [255, 128, 0] },
+    14: { link: ['ring_finger_2', 'ring_finger_3'], color: [255, 128, 0] },
+    15: { link: ['ring_finger_3', 'ring_finger_4'], color: [255, 128, 0] },
+    16: { link: ['wrist', 'pinky_finger_1'], color: [255, 128, 0] },
+    17: { link: ['pinky_finger_1', 'pinky_finger_2'], color: [255, 128, 0] },
+    18: { link: ['pinky_finger_2', 'pinky_finger_3'], color: [255, 128, 0] },
+    19: { link: ['pinky_finger_3', 'pinky_finger_4'], color: [255, 128, 0] },
+  },
+} as const;

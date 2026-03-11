@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.jpg
+*.png
+*.mp4
+.cache/
+.rtmlib/
