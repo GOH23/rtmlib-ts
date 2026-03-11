@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import type { ObjectDetector as ObjectType, PoseDetector as PoseType } from '../../src/index';
-import { drawDetectionsOnCanvas, drawPoseOnCanvas, drawResultsOnCanvas } from '../../src/index';
+import { drawDetectionsOnCanvas, drawPoseOnCanvas, drawResultsOnCanvas, getCacheInfo, clearModelCache } from '../../src/index';
 
 // Types
 interface Detection {
@@ -32,7 +32,8 @@ export default function Home() {
   const [hasImage, setHasImage] = useState(false);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [detectionInterval, setDetectionInterval] = useState<NodeJS.Timeout | null>(null);  // Track if image is loaded
+  const [detectionInterval, setDetectionInterval] = useState<NodeJS.Timeout | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<{ size: string; cached: number } | null>(null);
 
   // Initialize detectors
   useEffect(() => {
@@ -42,7 +43,7 @@ export default function Home() {
       ObjectDetector = ObjDet;
       PoseDetector = PoseDet;
 
-      const modelPath = `/models/yolo/${detModel}.onnx`;
+      const modelPath = `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/${detModel}.onnx`;
 
       // Object Detector with mode preset
       const objDet = new ObjectDetector({
@@ -51,6 +52,7 @@ export default function Home() {
         mode: perfMode,  // Use performance mode preset
         backend: backend,
         confidence: 0.3,  // Lower threshold for video
+        cache: true,  // Enable caching
       });
       const detStart = performance.now();
       await objDet.init();
@@ -60,15 +62,23 @@ export default function Home() {
       // Pose Detector
       const poseDet = new PoseDetector({
         detModel: modelPath,
-        poseModel: '/models/rtmpose/end2end.onnx',
+        poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
         detConfidence: 0.5,
         poseConfidence: 0.3,
         backend: backend,
+        cache: true,  // Enable caching
       });
       const poseStart = performance.now();
       await poseDet.init();
       console.log(`PoseDetector initialized in ${Math.round(performance.now() - poseStart)}ms`);
       setPoseDetector(poseDet);
+
+      // Load cache info
+      const cacheInfo = await getCacheInfo();
+      setCacheInfo({
+        size: cacheInfo.totalSizeFormatted,
+        cached: cacheInfo.cachedModels.length,
+      });
 
       setLoading(false);
       console.log(`Detectors initialized with ${detModel}, mode: ${perfMode}, backend: ${backend}`);
@@ -594,6 +604,27 @@ export default function Home() {
         </div>
       )}
 
+      {cacheInfo && (
+        <div style={styles.cacheInfo}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '14px', color: '#8892b0' }}>💾 Model Cache:</span>
+              <span style={{ marginLeft: '8px', color: '#00ff88', fontWeight: '600' }}>{cacheInfo.size}</span>
+              <span style={{ marginLeft: '4px', color: '#8892b0', fontSize: '12px' }}>({cacheInfo.cached} models)</span>
+            </div>
+            <button
+              onClick={async () => {
+                await clearModelCache();
+                setCacheInfo({ size: '0 B', cached: 0 });
+              }}
+              style={styles.clearCacheBtn}
+            >
+              🗑️ Clear Cache
+            </button>
+          </div>
+        </div>
+      )}
+
       {detections.length > 0 && (
         <div style={styles.results}>
           <h3>Results:</h3>
@@ -766,5 +797,23 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     marginTop: '16px',
     animation: 'pulse 2s infinite',
+  },
+  cacheInfo: {
+    marginTop: '16px',
+    padding: '16px 20px',
+    background: 'rgba(0,217,255,0.1)',
+    borderRadius: '12px',
+    border: '1px solid rgba(0,217,255,0.2)',
+  },
+  clearCacheBtn: {
+    padding: '8px 16px',
+    borderRadius: '8px',
+    border: 'none',
+    background: 'rgba(255,0,0,0.2)',
+    color: '#ff4444',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '500',
+    transition: 'all 0.2s',
   },
 };

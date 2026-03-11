@@ -24,6 +24,7 @@
 
 import * as ort from 'onnxruntime-web';
 import { BBox, Detection } from '../types/index';
+import { getCachedModel, isModelCached } from '../core/modelCache';
 
 // Configure ONNX Runtime Web
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
@@ -50,6 +51,8 @@ export interface PoseDetectorConfig {
   poseConfidence?: number;
   /** Execution backend (default: 'wasm') */
   backend?: 'wasm' | 'webgpu';
+  /** Enable model caching (default: true) */
+  cache?: boolean;
 }
 
 /**
@@ -122,14 +125,15 @@ const KEYPOINT_NAMES = [
  * Default configuration
  */
 const DEFAULT_CONFIG: Required<PoseDetectorConfig> = {
-  detModel: '',
-  poseModel: '',
+  detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+  poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
   detInputSize: [416, 416],  // Faster detection
   poseInputSize: [384, 288],  // Required by model
   detConfidence: 0.5,
   nmsThreshold: 0.45,
   poseConfidence: 0.3,
   backend: 'wasm',
+  cache: true,
 };
 
 export class PoseDetector {
@@ -159,37 +163,65 @@ export class PoseDetector {
 
     try {
       // Load detection model
-      const detResponse = await fetch(this.config.detModel);
-      const detBuffer = await detResponse.arrayBuffer();
+      console.log(`[PoseDetector] Loading detection model from: ${this.config.detModel}`);
+      let detBuffer: ArrayBuffer;
+      
+      if (this.config.cache) {
+        const detCached = await isModelCached(this.config.detModel);
+        console.log(`[PoseDetector] Det model cache ${detCached ? 'hit' : 'miss'}`);
+        detBuffer = await getCachedModel(this.config.detModel);
+      } else {
+        const detResponse = await fetch(this.config.detModel);
+        if (!detResponse.ok) {
+          throw new Error(`Failed to fetch det model: HTTP ${detResponse.status}`);
+        }
+        detBuffer = await detResponse.arrayBuffer();
+      }
+      
       this.detSession = await ort.InferenceSession.create(detBuffer, {
         executionProviders: [this.config.backend],
         graphOptimizationLevel: 'all',
       });
+      console.log(`[PoseDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
       // Load pose model
-      const poseResponse = await fetch(this.config.poseModel);
-      const poseBuffer = await poseResponse.arrayBuffer();
+      console.log(`[PoseDetector] Loading pose model from: ${this.config.poseModel}`);
+      let poseBuffer: ArrayBuffer;
+      
+      if (this.config.cache) {
+        const poseCached = await isModelCached(this.config.poseModel);
+        console.log(`[PoseDetector] Pose model cache ${poseCached ? 'hit' : 'miss'}`);
+        poseBuffer = await getCachedModel(this.config.poseModel);
+      } else {
+        const poseResponse = await fetch(this.config.poseModel);
+        if (!poseResponse.ok) {
+          throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
+        }
+        poseBuffer = await poseResponse.arrayBuffer();
+      }
+      
       this.poseSession = await ort.InferenceSession.create(poseBuffer, {
         executionProviders: [this.config.backend],
         graphOptimizationLevel: 'all',
       });
+      console.log(`[PoseDetector] Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
       // Pre-allocate all resources
       const [detW, detH] = this.config.detInputSize;
       this.detInputSize = [detW, detH];
-      
+
       const [poseW, poseH] = this.config.poseInputSize;
       this.poseInputSize = [poseW, poseH];
-      
+
       // Main canvas for detection
       this.canvas = document.createElement('canvas');
       this.canvas.width = detW;
       this.canvas.height = detH;
-      this.ctx = this.canvas.getContext('2d', { 
+      this.ctx = this.canvas.getContext('2d', {
         willReadFrequently: true,
         alpha: false
       })!;
-      
+
       // Pose crop canvas (reused for each person)
       this.poseCanvas = document.createElement('canvas');
       this.poseCanvas.width = poseW;
@@ -198,7 +230,7 @@ export class PoseDetector {
         willReadFrequently: true,
         alpha: false
       })!;
-      
+
       // Pre-allocate pose tensor buffer
       this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
 

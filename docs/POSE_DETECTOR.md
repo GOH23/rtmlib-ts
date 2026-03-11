@@ -20,8 +20,8 @@ npm install rtmlib-ts
 import { PoseDetector } from 'rtmlib-ts';
 
 const detector = new PoseDetector({
-  detModel: 'models/yolov12n.onnx',
-  poseModel: 'models/rtmlib/end2end.onnx',
+  detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+  poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
 });
 await detector.init();
 
@@ -240,8 +240,8 @@ Access via: `(people as any).stats`
 
 ```typescript
 const detector = new PoseDetector({
-  detModel: 'models/yolov12n.onnx',
-  poseModel: 'models/rtmlib/end2end.onnx',
+  detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+  poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
   backend: 'webgpu',  // Faster than WASM
 });
 ```
@@ -307,8 +307,8 @@ import { PoseDetector } from 'rtmlib-ts';
 async function main() {
   // Initialize
   const detector = new PoseDetector({
-    detModel: 'models/yolov12n.onnx',
-    poseModel: 'models/rtmlib/end2end.onnx',
+    detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+    poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
     detInputSize: [640, 640],
     poseInputSize: [384, 288],
     detConfidence: 0.5,

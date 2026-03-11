@@ -38,7 +38,7 @@ import { ObjectDetector, drawResultsOnCanvas } from 'rtmlib-ts';
 
 // Initialize
 const detector = new ObjectDetector({
-  model: 'models/yolo/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   classes: ['person', 'car', 'dog'],  // Filter classes or null for all
   confidence: 0.5,
   inputSize: [416, 416],  // 416 for speed, 640 for accuracy
@@ -68,8 +68,8 @@ import { PoseDetector, drawResultsOnCanvas } from 'rtmlib-ts';
 
 // Initialize
 const poseDetector = new PoseDetector({
-  detModel: 'models/yolo/yolov12n.onnx',
-  poseModel: 'models/rtmpose/end2end.onnx',
+  detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+  poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
   detInputSize: [416, 416],
   detConfidence: 0.5,
   poseConfidence: 0.3,
@@ -98,7 +98,7 @@ results.forEach(person => {
 import { ObjectDetector } from 'rtmlib-ts';
 
 const detector = new ObjectDetector({
-  model: 'models/yolo/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   inputSize: [416, 416],  // Faster for video
 });
 await detector.init();

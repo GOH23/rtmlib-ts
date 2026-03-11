@@ -20,6 +20,7 @@
  */
 
 import * as ort from 'onnxruntime-web';
+import { getCachedModel, isModelCached } from '../core/modelCache';
 
 // Configure ONNX Runtime Web
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
@@ -62,6 +63,8 @@ export interface ObjectDetectorConfig {
   mode?: 'performance' | 'balanced' | 'lightweight';
   /** Device type (for future use) */
   device?: 'cpu' | 'gpu';
+  /** Enable model caching (default: true) */
+  cache?: boolean;
 }
 
 /**
@@ -100,7 +103,7 @@ export interface DetectionStats {
  * Default configuration
  */
 const DEFAULT_CONFIG: Required<ObjectDetectorConfig> = {
-  model: '',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   inputSize: [416, 416],  // Faster default
   confidence: 0.5,
   nmsThreshold: 0.45,
@@ -108,6 +111,7 @@ const DEFAULT_CONFIG: Required<ObjectDetectorConfig> = {
   backend: 'wasm',
   mode: 'balanced',
   device: 'cpu',
+  cache: true,
 };
 
 // Performance presets
@@ -196,8 +200,25 @@ export class ObjectDetector {
     if (this.initialized) return;
 
     try {
-      const response = await fetch(this.config.model);
-      const modelBuffer = await response.arrayBuffer();
+      console.log(`[ObjectDetector] Loading model from: ${this.config.model}`);
+      
+      let modelBuffer: ArrayBuffer;
+      
+      // Use cached model if caching is enabled
+      if (this.config.cache) {
+        const isCached = await isModelCached(this.config.model);
+        console.log(`[ObjectDetector] Cache ${isCached ? 'hit' : 'miss'} for model`);
+        modelBuffer = await getCachedModel(this.config.model);
+      } else {
+        console.log(`[ObjectDetector] Caching disabled, fetching from network`);
+        const response = await fetch(this.config.model);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch model: HTTP ${response.status} ${response.statusText}`);
+        }
+        modelBuffer = await response.arrayBuffer();
+      }
+      
+      console.log(`[ObjectDetector] Model loaded, size: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
       this.session = await ort.InferenceSession.create(modelBuffer, {
         executionProviders: [this.config.backend],
@@ -207,15 +228,15 @@ export class ObjectDetector {
       // Pre-allocate canvas and tensor buffer for performance
       const [w, h] = this.config.inputSize;
       this.inputSize = [w, h];
-      
+
       this.canvas = document.createElement('canvas');
       this.canvas.width = w;
       this.canvas.height = h;
-      this.ctx = this.canvas.getContext('2d', { 
+      this.ctx = this.canvas.getContext('2d', {
         willReadFrequently: true,
         alpha: false  // Faster, no transparency
       })!;
-      
+
       // Pre-allocate tensor buffer (3 channels * width * height)
       this.tensorBuffer = new Float32Array(3 * w * h);
 

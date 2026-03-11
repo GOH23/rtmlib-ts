@@ -22,6 +22,16 @@ export { PoseTracker } from './solution/poseTracker';
 // Visualization
 export { drawBbox, drawSkeleton, drawDetectionsOnCanvas, drawPoseOnCanvas, drawResultsOnCanvas } from './visualization/draw';
 
+// Model caching utilities
+export {
+  getCachedModel,
+  isModelCached,
+  preloadModels,
+  clearModelCache,
+  getCacheSize,
+  getCacheInfo,
+} from './core/modelCache';
+
 // Types
 export type {
   Keypoint,

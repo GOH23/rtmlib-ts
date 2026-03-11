@@ -418,9 +418,9 @@
     // Load model
     async function loadModel() {
       try {
-        const response = await fetch('models/yolov12n.onnx');
+        const response = await fetch('https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx');
         const modelBuffer = await response.arrayBuffer();
-        
+
         session = await ort.InferenceSession.create(modelBuffer, {
           executionProviders: ['wasm'],
           graphOptimizationLevel: 'all',

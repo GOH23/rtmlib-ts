@@ -20,7 +20,7 @@ npm install rtmlib-ts
 import { ObjectDetector } from 'rtmlib-ts';
 
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',  // Path to model file
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',  // Path to model file
 });
 await detector.init();
 
@@ -32,7 +32,7 @@ console.log(`Found ${objects.length} objects`);
 
 ```typescript
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   classes: ['person', 'car', 'dog'],  // Only detect these
 });
 await detector.init();
@@ -45,7 +45,7 @@ const objects = await detector.detectFromCanvas(canvas);
 
 ```typescript
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   classes: null,  // Detect all 80 COCO classes
 });
 await detector.init();
@@ -61,7 +61,7 @@ objects.forEach(obj => {
 ```typescript
 // Start with person detection
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   classes: ['person'],
 });
 await detector.init();
@@ -221,14 +221,14 @@ All 80 COCO classes (by ID):
 ```typescript
 const video = document.querySelector('video')!;
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   classes: ['person', 'car'],
 });
 await detector.init();
 
 async function detectLoop() {
   const objects = await detector.detectFromVideo(video);
-  
+
   // Draw detections
   objects.forEach(obj => {
     ctx.strokeStyle = '#00ff00';
@@ -284,19 +284,19 @@ video.addEventListener('play', async () => {
 ```typescript
 // Use WebGPU for faster inference
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   backend: 'webgpu',  // Faster than WASM
 });
 
 // Smaller input size for speed
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   inputSize: [416, 416],  // Faster, less accurate
 });
 
 // Higher confidence threshold
 const detector = new ObjectDetector({
-  model: 'models/yolov12n.onnx',
+  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   confidence: 0.7,  // Only high-confidence detections
 });
 
