@@ -8,13 +8,13 @@ import {
   AnimalDetector,
   VITPOSE_MODELS,
   ANIMAL_CLASSES
-} from '../../src/index';
+} from '../../dist/index.js';
 import {
   clearModelCache,
   drawDetectionsOnCanvas,
   drawPoseOnCanvas,
   getCacheInfo,
-} from '../../src/index';
+} from '../../dist/index.js';
 
 // Types
 interface Detection {
