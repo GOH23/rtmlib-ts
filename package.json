@@ -9,7 +9,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "playground": "npm i && cd playground && npm run build",
-    "demo": "node --loader ts-node/esm examples/wholebody_demo.ts"
+
   },
   "keywords": [
     "pose-estimation",
@@ -42,6 +42,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.15",
+    "next": "^16.1.6",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   }
