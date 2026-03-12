@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "playground": "npm i && cd playground && npm run build",
+    "playground": "npm i && cd playground && npm run build"
 
   },
   "keywords": [
