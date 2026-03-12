@@ -1,6 +1,6 @@
 {
   "name": "rtmlib-ts",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "High-performance browser-based AI library for real-time object detection (YOLO12) and pose estimation (RTMW) using ONNX Runtime Web",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "playground": "cd playground && npm run dev",
+    "playground": "npm i && cd playground && npm run build",
     "demo": "node --loader ts-node/esm examples/wholebody_demo.ts"
   },
   "keywords": [

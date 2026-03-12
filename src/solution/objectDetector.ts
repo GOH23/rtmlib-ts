@@ -1,19 +1,25 @@
 /**
  * ObjectDetector - Universal object detection API
  * Supports YOLO12 and other YOLO models for multi-class detection
- * 
+ *
  * @example
  * ```typescript
- * // Initialize
+ * // Initialize with default model (YOLOv12n from HuggingFace)
  * const detector = new ObjectDetector({
- *   model: 'models/yolov12n.onnx',
  *   classes: ['person', 'car', 'dog'],  // Filter specific classes
  * });
  * await detector.init();
- * 
+ *
+ * // Or with custom model
+ * const detector = new ObjectDetector({
+ *   model: 'models/yolov12n.onnx',
+ *   classes: ['person'],
+ * });
+ * await detector.init();
+ *
  * // Detect from canvas
  * const objects = await detector.detectFromCanvas(canvas);
- * 
+ *
  * // Detect all classes
  * const allObjects = await detector.detectFromCanvas(canvas, { classes: null });
  * ```
@@ -47,8 +53,8 @@ export const COCO_CLASSES: string[] = [
  * Configuration options for ObjectDetector
  */
 export interface ObjectDetectorConfig {
-  /** Path to YOLO detection model */
-  model: string;
+  /** Path to YOLO detection model (optional - uses default YOLOv12n from HuggingFace if not specified) */
+  model?: string;
   /** Input size (default: [416, 416] for speed) */
   inputSize?: [number, number];
   /** Confidence threshold (default: 0.5) */
@@ -108,7 +114,7 @@ const DEFAULT_CONFIG: Required<ObjectDetectorConfig> = {
   confidence: 0.5,
   nmsThreshold: 0.45,
   classes: ['person'],
-  backend: 'wasm',
+  backend: 'webgpu',  // Default to WebGPU for better performance
   mode: 'balanced',
   device: 'cpu',
   cache: true,
@@ -136,17 +142,18 @@ export class ObjectDetector {
   constructor(config: ObjectDetectorConfig) {
     // Apply mode preset if specified
     let finalConfig = { ...DEFAULT_CONFIG, ...config };
-    
+
+    // Apply mode preset if specified
     if (config.mode && MODE_PRESETS[config.mode]) {
       const preset = MODE_PRESETS[config.mode];
       // Only override if not explicitly set
       if (!config.inputSize) finalConfig.inputSize = preset.inputSize;
       if (!config.confidence) finalConfig.confidence = preset.confidence;
     }
-    
+
     this.config = finalConfig;
     this.updateClassFilter();
-    
+
     console.log(`[ObjectDetector] Initialized with mode: ${config.mode || 'balanced'}, input: ${this.config.inputSize[0]}x${this.config.inputSize[1]}`);
   }
 

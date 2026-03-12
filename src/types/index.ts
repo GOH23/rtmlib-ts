@@ -48,7 +48,7 @@ export interface ModelConfig {
 
 export type ModeType = 'performance' | 'lightweight' | 'balanced';
 
-export type BackendType = 'opencv' | 'onnxruntime' | 'openvino';
+export type BackendType = 'opencv' | 'onnxruntime' | 'openvino' | 'wasm' | 'webgpu';
 export type DeviceType = 'cpu' | 'cuda' | 'mps' | string;
 
 export interface ImageData {

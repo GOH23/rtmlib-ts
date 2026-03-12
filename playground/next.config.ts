@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  cacheComponents: false,
   turbopack: {},
   async headers() {
     return [
@@ -23,7 +24,9 @@ const nextConfig: NextConfig = {
     config.experiments = { ...config.experiments, asyncWebAssembly: true };
     return config;
   },
-
+  experimental: {
+    
+  }
 
 
 };

@@ -61,16 +61,14 @@ export class BodyWithFeet {
       finalDetInputSize,
       0.45,
       0.7,
-      backend,
-      device
+      backend
     );
 
     this.poseModel = new RTMPose(
       finalPose!,
       finalPoseInputSize,
       toOpenpose,
-      backend,
-      device
+      backend
     );
   }
 

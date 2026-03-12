@@ -71,8 +71,7 @@ export class Wholebody {
         finalDetInputSize,
         0.45,
         0.5,
-        backend,
-        device
+        backend
       );
     } else {
       this.detModel = new YOLOX(
@@ -80,8 +79,7 @@ export class Wholebody {
         finalDetInputSize,
         0.45,
         0.7,
-        backend,
-        device
+        backend
       );
     }
 
@@ -89,8 +87,7 @@ export class Wholebody {
       finalPose!,
       finalPoseInputSize,
       toOpenpose,
-      backend,
-      device
+      backend
     );
   }
 

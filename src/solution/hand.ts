@@ -24,16 +24,14 @@ export class Hand {
       detInputSize,
       0.45,
       0.5,
-      backend,
-      device
+      backend
     );
 
     this.poseModel = new RTMPose(
       pose,
       poseInputSize,
       toOpenpose,
-      backend,
-      device
+      backend
     );
   }
 

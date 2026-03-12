@@ -6,6 +6,8 @@ High-performance unified API for real-time person detection and pose estimation.
 
 `PoseDetector` combines YOLO12 object detection with RTMW pose estimation in a single, optimized interface. Designed for speed and ease of use with convenient methods for web elements.
 
+**Models are loaded automatically from HuggingFace if not specified.**
+
 ## Installation
 
 ```bash
@@ -13,6 +15,19 @@ npm install rtmlib-ts
 ```
 
 ## Quick Start
+
+### Default Models (Auto-loaded)
+
+```typescript
+import { PoseDetector } from 'rtmlib-ts';
+
+// Initialize with default models from HuggingFace
+const detector = new PoseDetector();
+await detector.init();
+
+const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+const people = await detector.detectFromCanvas(canvas);
+```
 
 ### From Canvas
 
@@ -72,21 +87,29 @@ video.addEventListener('play', async () => {
 ### Constructor
 
 ```typescript
-new PoseDetector(config: PoseDetectorConfig)
+new PoseDetector(config?: PoseDetectorConfig)
 ```
 
 **Configuration Options:**
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `detModel` | `string` | required | Path to YOLO12 detection model |
-| `poseModel` | `string` | required | Path to RTMW pose model |
-| `detInputSize` | `[number, number]` | `[640, 640]` | Detection input size |
+| `detModel` | `string` | optional | Path to YOLO12 detection model |
+| `poseModel` | `string` | optional | Path to RTMW pose model |
+| `detInputSize` | `[number, number]` | `[416, 416]` | Detection input size |
 | `poseInputSize` | `[number, number]` | `[384, 288]` | Pose input size |
 | `detConfidence` | `number` | `0.5` | Detection confidence threshold |
 | `nmsThreshold` | `number` | `0.45` | NMS IoU threshold |
 | `poseConfidence` | `number` | `0.3` | Keypoint visibility threshold |
 | `backend` | `'wasm' \| 'webgpu'` | `'wasm'` | Execution backend |
+| `cache` | `boolean` | `true` | Enable model caching |
+
+### Default Models
+
+If `detModel` and `poseModel` are not specified, the following default models are used:
+
+- **Detector**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx`
+- **Pose**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx`
 
 ### Methods
 

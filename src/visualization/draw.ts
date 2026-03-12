@@ -439,16 +439,21 @@ export function drawPoseOnCanvas(
   }>,
   confidenceThreshold: number = 0.3
 ): void {
-  // COCO17 skeleton connections
+  // COCO17 skeleton connections (correct MMPose format)
+  // Keypoint order: 0=nose, 1=left_eye, 2=right_eye, 3=left_ear, 4=right_ear,
+  // 5=left_shoulder, 6=right_shoulder, 7=left_elbow, 8=right_elbow,
+  // 9=left_wrist, 10=right_wrist, 11=left_hip, 12=right_hip,
+  // 13=left_knee, 14=right_knee, 15=left_ankle, 16=right_ankle
   const skeleton = [
-    [0, 1], [0, 2], [1, 3], [2, 4], // Head
-    [5, 6], // Shoulders
-    [5, 7], [7, 9], // Left arm
-    [6, 8], [8, 10], // Right arm
-    [5, 11], [6, 12], // Torso
-    [11, 12], // Hips
-    [11, 13], [13, 15], // Left leg
-    [12, 14], [14, 16], // Right leg
+    [0, 1], [0, 2], // nose to eyes
+    [1, 3], [2, 4], // eyes to ears
+    [5, 6], // shoulders
+    [5, 7], [7, 9], // left arm
+    [6, 8], [8, 10], // right arm
+    [5, 11], [6, 12], // shoulders to hips
+    [11, 12], // hips
+    [11, 13], [13, 15], // left leg
+    [12, 14], [14, 16], // right leg
   ];
 
   const keypointColors = [

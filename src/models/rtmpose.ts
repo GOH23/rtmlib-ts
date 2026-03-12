@@ -5,7 +5,7 @@
  */
 
 import { BaseTool } from '../core/base';
-import { BBox } from '../types/index';
+import { BBox, BackendType } from '../types/index';
 
 export class RTMPose extends BaseTool {
   private toOpenpose: boolean;
@@ -19,10 +19,9 @@ export class RTMPose extends BaseTool {
     onnxModel: string,
     modelInputSize: [number, number] = [384, 288],  // [height, width]
     toOpenpose: boolean = false,
-    backend: 'onnxruntime' = 'onnxruntime',
-    device: string = 'cpu'
+    backend: BackendType = 'webgpu'
   ) {
-    super(onnxModel, modelInputSize, null, null, backend, device);
+    super(onnxModel, modelInputSize, null, null, backend);
     this.toOpenpose = toOpenpose;
   }
 

@@ -6,6 +6,8 @@ Universal multi-class object detection API supporting all 80 COCO classes.
 
 `ObjectDetector` provides a simple, unified interface for detecting objects in images, videos, and live camera feeds. Supports YOLO12 and other YOLO models.
 
+**Model is loaded automatically from HuggingFace if not specified.**
+
 ## Installation
 
 ```bash
@@ -13,6 +15,21 @@ npm install rtmlib-ts
 ```
 
 ## Quick Start
+
+### Default Model (Auto-loaded)
+
+```typescript
+import { ObjectDetector } from 'rtmlib-ts';
+
+// Initialize with default model from HuggingFace
+const detector = new ObjectDetector({
+  classes: ['person', 'car'],  // Optional: filter classes
+});
+await detector.init();
+
+const objects = await detector.detectFromCanvas(canvas);
+console.log(`Found ${objects.length} objects`);
+```
 
 ### Detect People (Default)
 
@@ -78,19 +95,27 @@ detector.setClasses(null);
 ### Constructor
 
 ```typescript
-new ObjectDetector(config: ObjectDetectorConfig)
+new ObjectDetector(config?: ObjectDetectorConfig)
 ```
 
 **Configuration:**
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `model` | `string` | required | Path to YOLO model |
-| `inputSize` | `[number, number]` | `[640, 640]` | Input size |
+| `model` | `string` | optional | Path to YOLO model |
+| `inputSize` | `[number, number]` | `[416, 416]` | Input size |
 | `confidence` | `number` | `0.5` | Confidence threshold |
 | `nmsThreshold` | `number` | `0.45` | NMS IoU threshold |
 | `classes` | `string[] \| null` | `['person']` | Classes to detect |
 | `backend` | `'wasm' \| 'webgpu'` | `'wasm'` | Execution backend |
+| `mode` | `'performance' \| 'balanced' \| 'lightweight'` | `'balanced'` | Performance mode |
+| `cache` | `boolean` | `true` | Enable model caching |
+
+### Default Model
+
+If `model` is not specified, the following default model is used:
+
+- **Model**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx`
 
 ### Methods
 

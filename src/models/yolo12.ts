@@ -6,7 +6,7 @@
  */
 
 import { BaseTool } from '../core/base';
-import { BBox, Detection } from '../types/index';
+import { BBox, Detection, BackendType } from '../types/index';
 
 export class YOLO12 extends BaseTool {
   private nmsThr: number;
@@ -22,10 +22,9 @@ export class YOLO12 extends BaseTool {
     modelInputSize: [number, number] = [640, 640],
     nmsThr: number = 0.45,
     scoreThr: number = 0.5,
-    backend: 'onnxruntime' = 'onnxruntime',
-    device: string = 'cpu'
+    backend: BackendType = 'webgpu'
   ) {
-    super(modelPath, modelInputSize, null, null, backend, device);
+    super(modelPath, modelInputSize, null, null, backend);
     this.nmsThr = nmsThr;
     this.scoreThr = scoreThr;
   }

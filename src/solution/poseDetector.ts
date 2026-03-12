@@ -1,22 +1,26 @@
 /**
  * PoseDetector - Unified API for person detection and pose estimation
  * Combines YOLO12 detector with RTMW pose model in a single optimized interface
- * 
+ *
  * @example
  * ```typescript
- * // Initialize
+ * // Initialize with default models (from HuggingFace)
+ * const detector = new PoseDetector();
+ * await detector.init();
+ *
+ * // Or with custom models
  * const detector = new PoseDetector({
  *   detModel: 'models/yolov12n.onnx',
  *   poseModel: 'models/rtmlib/end2end.onnx',
  * });
  * await detector.init();
- * 
+ *
  * // From canvas
  * const results = await detector.detectFromCanvas(canvas);
- * 
+ *
  * // From video element
  * const results = await detector.detectFromVideo(videoElement);
- * 
+ *
  * // From raw image data
  * const results = await detector.detect(imageData, width, height);
  * ```
@@ -35,11 +39,11 @@ ort.env.wasm.proxy = false;
  * Configuration options for PoseDetector
  */
 export interface PoseDetectorConfig {
-  /** Path to YOLO12 detection model */
-  detModel: string;
-  /** Path to RTMW pose estimation model */
-  poseModel: string;
-  /** Detection input size (default: [640, 640]) */
+  /** Path to YOLO12 detection model (optional - uses default from HuggingFace if not specified) */
+  detModel?: string;
+  /** Path to RTMW pose estimation model (optional - uses default from HuggingFace if not specified) */
+  poseModel?: string;
+  /** Detection input size (default: [416, 416]) */
   detInputSize?: [number, number];
   /** Pose input size (default: [384, 288]) */
   poseInputSize?: [number, number];
@@ -132,7 +136,7 @@ const DEFAULT_CONFIG: Required<PoseDetectorConfig> = {
   detConfidence: 0.5,
   nmsThreshold: 0.45,
   poseConfidence: 0.3,
-  backend: 'wasm',
+  backend: 'webgpu',  // Default to WebGPU for better performance
   cache: true,
 };
 

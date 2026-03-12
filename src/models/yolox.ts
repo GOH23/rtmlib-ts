@@ -5,7 +5,7 @@
 
 import { BaseTool } from '../core/base';
 import { multiclassNms } from '../core/postprocessing';
-import { BBox } from '../types/index';
+import { BBox, BackendType } from '../types/index';
 
 export class YOLOX extends BaseTool {
   private nmsThr: number;
@@ -17,10 +17,9 @@ export class YOLOX extends BaseTool {
     modelInputSize: [number, number] = [640, 640],
     nmsThr: number = 0.45,
     scoreThr: number = 0.3,  // Lower default threshold
-    backend: 'onnxruntime' = 'onnxruntime',
-    device: string = 'cpu'
+    backend: BackendType = 'webgpu'
   ) {
-    super(onnxModel, modelInputSize, null, null, backend, device);
+    super(onnxModel, modelInputSize, null, null, backend);
     this.nmsThr = nmsThr;
     this.scoreThr = scoreThr;
   }

@@ -5,7 +5,7 @@
  */
 
 import * as ort from 'onnxruntime-web';
-import { BackendType, DeviceType } from '../types/index.js';
+import { BackendType } from '../types/index.js';
 
 export abstract class BaseTool {
   protected session: ort.InferenceSession | null = null;
@@ -14,22 +14,19 @@ export abstract class BaseTool {
   protected mean: number[] | null;
   protected std: number[] | null;
   protected backend: BackendType;
-  protected device: DeviceType;
 
   constructor(
     modelPath: string,
     modelInputSize: [number, number],
     mean: number[] | null = null,
     std: number[] | null = null,
-    backend: BackendType = 'onnxruntime',
-    device: DeviceType = 'cpu'
+    backend: BackendType = 'webgpu'
   ) {
     this.modelPath = modelPath;
     this.modelInputSize = modelInputSize;
     this.mean = mean;
     this.std = std;
     this.backend = backend;
-    this.device = device;
   }
 
   protected async init(): Promise<void> {
