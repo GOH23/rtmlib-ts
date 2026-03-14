@@ -1,6 +1,0 @@
-{
-  "buildCommand": "npm ci && npm run build && cd playground && npm ci && npm run build",
-  "outputDirectory": "playground/.next",
-  "installCommand": "npm ci && cd playground && npm ci",
-  "framework": null
-}
