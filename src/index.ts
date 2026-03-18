@@ -1,15 +1,7 @@
 /**
  * rtmlib-ts - Real-Time Multi-Person Pose Estimation Library
- *
- * TypeScript port of rtmlib Python library
- * Based on RTMPose, DWPose, RTMO, RTMW models
+ * TypeScript port of rtmlib for browser-based AI inference
  */
-
-// Models
-export { YOLOX } from './models/yolox';
-export { YOLO12 } from './models/yolo12';
-export { RTMPose } from './models/rtmpose';
-export { RTMPose3D } from './models/rtmpose3d';
 
 // Solutions (High-level APIs)
 export { ObjectDetector, COCO_CLASSES } from './solution/objectDetector';
@@ -17,12 +9,11 @@ export { PoseDetector } from './solution/poseDetector';
 export { Pose3DDetector, type Person3D, type Pose3DStats } from './solution/pose3dDetector';
 export { CustomDetector, type CustomDetectorConfig, type DetectionResult } from './solution/customDetector';
 export { AnimalDetector, ANIMAL_CLASSES, VITPOSE_MODELS, type VitPoseModelType, type DetectedAnimal, type AnimalKeypoint } from './solution/animalDetector';
-export { Wholebody } from './solution/wholebody';
-export { Wholebody3D, type Wholebody3DResult } from './solution/wholebody3d';
-export { Body } from './solution/body';
-export { Hand } from './solution/hand';
-export { BodyWithFeet } from './solution/bodyWithFeet';
-export { PoseTracker } from './solution/poseTracker';
+
+// MediaPipe Solutions
+export { MediaPipeObjectDetector, type MediaPipeDetectedObject, type MediaPipeDetectionStats, type MediaPipeObjectDetectorConfig } from './solution/mediaPipeObjectDetector';
+export { MediaPipePoseDetector, type MediaPipeLandmark, type MediaPipeWorldLandmark, type MediaPipePose, type MediaPipePoseStats, type MediaPipePoseDetectorConfig } from './solution/mediaPipePoseDetector';
+export { MediaPipeObject3DPoseDetector, type MediaPipeObject3DPoseDetectorConfig, type Person3DWithBBox } from './solution/mediaPipeObject3DPoseDetector';
 
 // Visualization
 export { drawBbox, drawSkeleton, drawDetectionsOnCanvas, drawPoseOnCanvas, drawResultsOnCanvas } from './visualization/draw';
@@ -36,6 +27,16 @@ export {
   getCacheSize,
   getCacheInfo,
 } from './core/modelCache';
+
+// MediaPipe cache utilities
+export {
+  cacheMediaPipeModel,
+  getCachedMediaPipeModel,
+  isMediaPipeModelCached,
+  clearMediaPipeCache,
+  getMediaPipeCacheInfo,
+  loadMediaPipeModelWithCache,
+} from './core/mediaPipeCache';
 
 // Types
 export type {
@@ -53,6 +54,7 @@ export type {
   ImageData,
   RGBImage,
   BGRImage,
+  WebNNProviderOptions,
 } from './types/index';
 
 // Skeleton configurations

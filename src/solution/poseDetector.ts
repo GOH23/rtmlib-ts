@@ -26,14 +26,20 @@
  * ```
  */
 
-import * as ort from 'onnxruntime-web';
-import { BBox, Detection } from '../types/index';
+import * as ort from 'onnxruntime-web/all';
+import { BBox, Detection, type WebNNProviderOptions } from '../types/index';
 import { getCachedModel, isModelCached } from '../core/modelCache';
+import { MediaPipeObjectDetector } from './mediaPipeObjectDetector';
 
 // Configure ONNX Runtime Web
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
 ort.env.wasm.simd = true;
 ort.env.wasm.proxy = false;
+
+/**
+ * Backend type for PoseDetector
+ */
+export type PoseDetectorBackend = 'yolo-rtmpose' | 'mediapipe-rtmpose';
 
 /**
  * Configuration options for PoseDetector
@@ -53,10 +59,24 @@ export interface PoseDetectorConfig {
   nmsThreshold?: number;
   /** Pose keypoint confidence threshold (default: 0.3) */
   poseConfidence?: number;
-  /** Execution backend (default: 'wasm') */
-  backend?: 'wasm' | 'webgpu';
+  /** Execution backend (default: 'webgl') */
+  backend?: 'wasm' | 'webgl' | 'webgpu' | 'webnn';
+  /** WebNN provider options (only used when backend is 'webnn') */
+  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  /** Device type for WebNN/WebGPU (default: 'gpu' for high performance) */
+  deviceType?: 'cpu' | 'gpu' | 'npu';
+  /** Power preference for WebNN/WebGPU (default: 'high-performance') */
+  powerPreference?: 'default' | 'low-power' | 'high-performance';
   /** Enable model caching (default: true) */
   cache?: boolean;
+  /** Backend type: 'yolo-rtmpose' for YOLO detection, 'mediapipe-rtmpose' for MediaPipe detection + RTMPose (default: 'yolo-rtmpose') */
+  detectorType?: PoseDetectorBackend;
+  /** MediaPipe model path for person detection (only used when detectorType is 'mediapipe-rtmpose') */
+  mediaPipeModelPath?: string;
+  /** MediaPipe score threshold (only used when detectorType is 'mediapipe-rtmpose') */
+  mediaPipeScoreThreshold?: number;
+  /** MediaPipe max results (only used when detectorType is 'mediapipe-rtmpose') */
+  mediaPipeMaxResults?: number;
 }
 
 /**
@@ -128,22 +148,34 @@ const KEYPOINT_NAMES = [
 /**
  * Default configuration
  */
-const DEFAULT_CONFIG: Required<PoseDetectorConfig> = {
+const DEFAULT_CONFIG: Omit<Required<PoseDetectorConfig>, 'webnnOptions'> & {
+  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+} = {
   detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
-  detInputSize: [416, 416],  // Faster detection
-  poseInputSize: [384, 288],  // Required by model
+  detInputSize: [416, 416],
+  poseInputSize: [384, 288],
   detConfidence: 0.5,
   nmsThreshold: 0.45,
   poseConfidence: 0.3,
-  backend: 'webgpu',  // Default to WebGPU for better performance
+  backend: 'webgl',
+  webnnOptions: undefined as import('../types/index').WebNNProviderOptionsOrUndefined,
+  deviceType: 'gpu',
+  powerPreference: 'high-performance',
   cache: true,
+  detectorType: 'yolo-rtmpose',
+  mediaPipeModelPath: 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite',
+  mediaPipeScoreThreshold: 0.5,
+  mediaPipeMaxResults: -1,
 };
 
 export class PoseDetector {
-  private config: Required<PoseDetectorConfig>;
+  private config: Omit<Required<PoseDetectorConfig>, 'webnnOptions'> & {
+    webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  };
   private detSession: ort.InferenceSession | null = null;
   private poseSession: ort.InferenceSession | null = null;
+  private mediaPipeObjectDetector: MediaPipeObjectDetector | null = null;
   private initialized = false;
 
   // Pre-allocated buffers for maximum performance
@@ -166,84 +198,193 @@ export class PoseDetector {
     if (this.initialized) return;
 
     try {
-      // Load detection model
-      console.log(`[PoseDetector] Loading detection model from: ${this.config.detModel}`);
-      let detBuffer: ArrayBuffer;
-      
-      if (this.config.cache) {
-        const detCached = await isModelCached(this.config.detModel);
-        console.log(`[PoseDetector] Det model cache ${detCached ? 'hit' : 'miss'}`);
-        detBuffer = await getCachedModel(this.config.detModel);
+      // Initialize based on detector type
+      if (this.config.detectorType === 'mediapipe-rtmpose') {
+        await this.initMediaPipe();
       } else {
-        const detResponse = await fetch(this.config.detModel);
-        if (!detResponse.ok) {
-          throw new Error(`Failed to fetch det model: HTTP ${detResponse.status}`);
-        }
-        detBuffer = await detResponse.arrayBuffer();
+        await this.initYoloRtmpose();
       }
-      
-      this.detSession = await ort.InferenceSession.create(detBuffer, {
-        executionProviders: [this.config.backend],
-        graphOptimizationLevel: 'all',
-      });
-      console.log(`[PoseDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
-
-      // Load pose model
-      console.log(`[PoseDetector] Loading pose model from: ${this.config.poseModel}`);
-      let poseBuffer: ArrayBuffer;
-      
-      if (this.config.cache) {
-        const poseCached = await isModelCached(this.config.poseModel);
-        console.log(`[PoseDetector] Pose model cache ${poseCached ? 'hit' : 'miss'}`);
-        poseBuffer = await getCachedModel(this.config.poseModel);
-      } else {
-        const poseResponse = await fetch(this.config.poseModel);
-        if (!poseResponse.ok) {
-          throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
-        }
-        poseBuffer = await poseResponse.arrayBuffer();
-      }
-      
-      this.poseSession = await ort.InferenceSession.create(poseBuffer, {
-        executionProviders: [this.config.backend],
-        graphOptimizationLevel: 'all',
-      });
-      console.log(`[PoseDetector] Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
-
-      // Pre-allocate all resources
-      const [detW, detH] = this.config.detInputSize;
-      this.detInputSize = [detW, detH];
-
-      const [poseW, poseH] = this.config.poseInputSize;
-      this.poseInputSize = [poseW, poseH];
-
-      // Main canvas for detection
-      this.canvas = document.createElement('canvas');
-      this.canvas.width = detW;
-      this.canvas.height = detH;
-      this.ctx = this.canvas.getContext('2d', {
-        willReadFrequently: true,
-        alpha: false
-      })!;
-
-      // Pose crop canvas (reused for each person)
-      this.poseCanvas = document.createElement('canvas');
-      this.poseCanvas.width = poseW;
-      this.poseCanvas.height = poseH;
-      this.poseCtx = this.poseCanvas.getContext('2d', {
-        willReadFrequently: true,
-        alpha: false
-      })!;
-
-      // Pre-allocate pose tensor buffer
-      this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
-
-      this.initialized = true;
-      console.log(`[PoseDetector] ✅ Initialized (det:${detW}x${detH}, pose:${poseW}x${poseH})`);
     } catch (error) {
       console.error('[PoseDetector] ❌ Initialization failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * Initialize YOLO + RTMPose models (original implementation)
+   */
+  private async initYoloRtmpose(): Promise<void> {
+    // Load detection model
+    console.log(`[PoseDetector] Loading detection model from: ${this.config.detModel}`);
+    let detBuffer: ArrayBuffer;
+
+    if (this.config.cache) {
+      const detCached = await isModelCached(this.config.detModel);
+      console.log(`[PoseDetector] Det model cache ${detCached ? 'hit' : 'miss'}`);
+      detBuffer = await getCachedModel(this.config.detModel);
+    } else {
+      const detResponse = await fetch(this.config.detModel);
+      if (!detResponse.ok) {
+        throw new Error(`Failed to fetch det model: HTTP ${detResponse.status}`);
+      }
+      detBuffer = await detResponse.arrayBuffer();
+    }
+
+    // Build execution providers with WebNN options
+    const detExecProviders: any[] = [];
+    
+    if (this.config.backend === 'webnn') {
+      const webnnOptions = {
+        name: 'webnn' as const,
+        deviceType: this.config.deviceType || 'gpu',
+        powerPreference: this.config.powerPreference || 'high-performance',
+      };
+      detExecProviders.push(webnnOptions);
+      console.log(`[PoseDetector] ✅ Detection model using WebNN: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
+    } else if (this.config.backend === 'webgpu') {
+      // Check if WebGPU is available
+      if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
+        detExecProviders.push('webgpu');
+        console.log(`[PoseDetector] ✅ Detection model using WebGPU`);
+      } else {
+        console.warn(`[PoseDetector] ⚠️ WebGPU not available, falling back to WebGL`);
+        detExecProviders.push('webgl');
+      }
+    } else {
+      detExecProviders.push(this.config.backend);
+      console.log(`[PoseDetector] ✅ Detection model using backend: ${this.config.backend}`);
+    }
+
+    console.log(`[PoseDetector] Detection execution providers: ${JSON.stringify(detExecProviders)}`);
+
+    this.detSession = await ort.InferenceSession.create(detBuffer, {
+      executionProviders: detExecProviders,
+      graphOptimizationLevel: 'all',
+    });
+    console.log(`[PoseDetector] ✅ Detection session created successfully`);
+    console.log(`[PoseDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
+
+    // Load pose model
+    console.log(`[PoseDetector] Loading pose model from: ${this.config.poseModel}`);
+    let poseBuffer: ArrayBuffer;
+
+    if (this.config.cache) {
+      const poseCached = await isModelCached(this.config.poseModel);
+      console.log(`[PoseDetector] Pose model cache ${poseCached ? 'hit' : 'miss'}`);
+      poseBuffer = await getCachedModel(this.config.poseModel);
+    } else {
+      const poseResponse = await fetch(this.config.poseModel);
+      if (!poseResponse.ok) {
+        throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
+      }
+      poseBuffer = await poseResponse.arrayBuffer();
+    }
+
+    const poseExecProviders: any[] = [];
+    
+    if (this.config.backend === 'webnn') {
+      const webnnOptions = {
+        name: 'webnn' as const,
+        deviceType: this.config.deviceType || 'gpu',
+        powerPreference: this.config.powerPreference || 'high-performance',
+      };
+      poseExecProviders.push(webnnOptions);
+      console.log(`[PoseDetector] ✅ Pose model using WebNN: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
+    } else if (this.config.backend === 'webgpu') {
+      // Check if WebGPU is available
+      if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
+        poseExecProviders.push('webgpu');
+        console.log(`[PoseDetector] ✅ Pose model using WebGPU`);
+      } else {
+        console.warn(`[PoseDetector] ⚠️ WebGPU not available, falling back to WebGL`);
+        poseExecProviders.push('webgl');
+      }
+    } else {
+      poseExecProviders.push(this.config.backend);
+      console.log(`[PoseDetector] ✅ Pose model using backend: ${this.config.backend}`);
+    }
+
+    console.log(`[PoseDetector] Pose execution providers: ${JSON.stringify(poseExecProviders)}`);
+
+    this.poseSession = await ort.InferenceSession.create(poseBuffer, {
+      executionProviders: poseExecProviders,
+      graphOptimizationLevel: 'all',
+    });
+    console.log(`[PoseDetector] ✅ Pose session created successfully`);
+    console.log(`[PoseDetector] Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
+
+    // Pre-allocate all resources
+    const [detW, detH] = this.config.detInputSize;
+    this.detInputSize = [detW, detH];
+
+    const [poseW, poseH] = this.config.poseInputSize;
+    this.poseInputSize = [poseW, poseH];
+
+    // Main canvas for detection
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = detW;
+    this.canvas.height = detH;
+    this.ctx = this.canvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: false
+    })!;
+
+    // Pose crop canvas (reused for each person)
+    this.poseCanvas = document.createElement('canvas');
+    this.poseCanvas.width = poseW;
+    this.poseCanvas.height = poseH;
+    this.poseCtx = this.poseCanvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: false
+    })!;
+
+    // Pre-allocate pose tensor buffer
+    this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
+
+    this.initialized = true;
+    console.log(`[PoseDetector] ✅ YOLO+RTMPose Initialized (det:${detW}x${detH}, pose:${poseW}x${poseH})`);
+  }
+
+  /**
+   * Initialize MediaPipe Object Detector + RTMPose
+   */
+  private async initMediaPipe(): Promise<void> {
+    // Initialize MediaPipe Object Detector for person detection
+    this.mediaPipeObjectDetector = new MediaPipeObjectDetector({
+      modelPath: this.config.mediaPipeModelPath,
+      scoreThreshold: this.config.mediaPipeScoreThreshold,
+      maxResults: this.config.mediaPipeMaxResults,
+      categoryAllowlist: ['person'],
+      cache: this.config.cache,
+    });
+
+    await this.mediaPipeObjectDetector.init();
+
+    // Initialize RTMPose model
+    let poseBuffer: ArrayBuffer;
+    if (this.config.cache) {
+      poseBuffer = await getCachedModel(this.config.poseModel);
+    } else {
+      const response = await fetch(this.config.poseModel);
+      if (!response.ok) throw new Error(`Failed to fetch pose model: HTTP ${response.status}`);
+      poseBuffer = await response.arrayBuffer();
+    }
+
+    this.poseSession = await ort.InferenceSession.create(poseBuffer, {
+      executionProviders: [this.config.backend, 'wasm'],
+      graphOptimizationLevel: 'all',
+    });
+
+    const [poseW, poseH] = this.config.poseInputSize;
+    this.poseInputSize = [poseW, poseH];
+
+    this.poseCanvas = document.createElement('canvas');
+    this.poseCanvas.width = poseW;
+    this.poseCanvas.height = poseH;
+    this.poseCtx = this.poseCanvas.getContext('2d', { willReadFrequently: true, alpha: false })!;
+    this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
+
+    this.initialized = true;
   }
 
   /**
@@ -252,11 +393,23 @@ export class PoseDetector {
    * @returns Array of detected people with keypoints
    */
   async detectFromCanvas(canvas: HTMLCanvasElement): Promise<Person[]> {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      throw new Error('Could not get 2D context from canvas');
+    if (!this.initialized) await this.init();
+
+    // Use MediaPipe Object Detector if selected
+    if (this.config.detectorType === 'mediapipe-rtmpose' && this.mediaPipeObjectDetector) {
+      const mpDetections = await this.mediaPipeObjectDetector.detectFromCanvas(canvas);
+      return this.detectPosesFromDetections(canvas, mpDetections.map(d => ({
+        x1: d.bbox.x1,
+        y1: d.bbox.y1,
+        x2: d.bbox.x1 + d.bbox.width,
+        y2: d.bbox.y1 + d.bbox.height,
+        confidence: d.score,
+      })));
     }
 
+    // Otherwise use YOLO
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get 2D context from canvas');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     return this.detect(new Uint8Array(imageData.data.buffer), canvas.width, canvas.height);
   }
@@ -445,7 +598,44 @@ export class PoseDetector {
    * Get detection and pose statistics from last call
    */
   getStats(): PoseStats | null {
-    return null; // Stats attached to results
+    return null;
+  }
+
+  /**
+   * Estimate poses from pre-detected bounding boxes
+   */
+  private async detectPosesFromDetections(
+    canvas: HTMLCanvasElement,
+    bboxes: Array<{ x1: number; y1: number; x2: number; y2: number; confidence: number }>
+  ): Promise<Person[]> {
+    const imageData = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+    const poseStart = performance.now();
+    const people: Person[] = [];
+
+    for (const bbox of bboxes) {
+      const keypoints = await this.estimatePose(
+        new Uint8Array(imageData.data.buffer),
+        canvas.width,
+        canvas.height,
+        bbox
+      );
+      people.push({
+        bbox,
+        keypoints,
+        scores: keypoints.map(k => k.score),
+      });
+    }
+
+    const poseTime = performance.now() - poseStart;
+
+    (people as any).stats = {
+      personCount: people.length,
+      detTime: 0,
+      poseTime: Math.round(poseTime),
+      totalTime: Math.round(poseTime),
+    } as PoseStats;
+
+    return people;
   }
 
   /**
@@ -886,6 +1076,10 @@ export class PoseDetector {
     if (this.poseSession) {
       this.poseSession.release();
       this.poseSession = null;
+    }
+    if (this.mediaPipeObjectDetector) {
+      this.mediaPipeObjectDetector.dispose();
+      this.mediaPipeObjectDetector = null;
     }
     this.initialized = false;
   }

@@ -20,14 +20,35 @@
  * ```
  */
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/all';
 import { getCachedModel, isModelCached } from '../core/modelCache';
-import { Wholebody3DResult } from './wholebody3d';
+import { MediaPipeObjectDetector } from './mediaPipeObjectDetector';
+
+/**
+ * 3D pose detection result
+ */
+export interface Wholebody3DResult {
+  keypoints: number[][][];
+  scores: number[][];
+  keypointsSimcc: number[][][];
+  keypoints2d: number[][][];
+  stats?: {
+    personCount: number;
+    detTime: number;
+    poseTime: number;
+    totalTime: number;
+  };
+}
 
 // Configure ONNX Runtime Web
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@latest/dist/';
 ort.env.wasm.simd = true;
 ort.env.wasm.proxy = false;
+
+/**
+ * Backend type for Pose3DDetector
+ */
+export type Pose3DDetectorBackend = 'yolo-rtmw3d' | 'mediapipe-rtmw3d';
 
 /**
  * Configuration options for Pose3DDetector
@@ -47,12 +68,20 @@ export interface Pose3DDetectorConfig {
   nmsThreshold?: number;
   /** Pose keypoint confidence threshold (default: 0.3) */
   poseConfidence?: number;
-  /** Execution backend (default: 'webgpu') */
-  backend?: 'wasm' | 'webgpu';
+  /** Execution backend (default: 'webgl') */
+  backend?: 'wasm' | 'webgl' | 'webgpu';
   /** Enable model caching (default: true) */
   cache?: boolean;
   /** Z-axis range in meters (default: 2.1744869) */
   zRange?: number;
+  /** Backend type for person detection: 'yolo-rtmw3d' for YOLO detection, 'mediapipe-rtmw3d' for MediaPipe detection (default: 'yolo-rtmw3d') */
+  detectorType?: Pose3DDetectorBackend;
+  /** MediaPipe model path (only used when detectorType contains 'mediapipe') */
+  mediaPipeModelPath?: string;
+  /** MediaPipe score threshold (only used when detectorType contains 'mediapipe') */
+  mediaPipeScoreThreshold?: number;
+  /** MediaPipe max results (only used when detectorType contains 'mediapipe') */
+  mediaPipeMaxResults?: number;
 }
 
 /**
@@ -121,19 +150,24 @@ const DEFAULT_CONFIG: Required<Pose3DDetectorConfig> = {
   detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   poseModel: 'https://huggingface.co/Soykaf/RTMW3D-x/resolve/main/onnx/rtmw3d-x_8xb64_cocktail14-384x288-b0a0eab7_20240626.onnx',
   detInputSize: [640, 640],
-  poseInputSize: [288, 384],  // [width=288, height=384] - creates tensor [1,3,384,288]
+  poseInputSize: [288, 384],
   detConfidence: 0.45,
   nmsThreshold: 0.7,
   poseConfidence: 0.3,
-  backend: 'webgpu',  // Default to WebGPU for better performance
+  backend: 'webgl',
   cache: true,
   zRange: 2.1744869,
+  detectorType: 'yolo-rtmw3d',
+  mediaPipeModelPath: 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite',
+  mediaPipeScoreThreshold: 0.5,
+  mediaPipeMaxResults: -1,
 };
 
 export class Pose3DDetector {
   private config: Required<Pose3DDetectorConfig>;
   private detSession: ort.InferenceSession | null = null;
   private poseSession: ort.InferenceSession | null = null;
+  private mediaPipeObjectDetector: MediaPipeObjectDetector | null = null;
   private initialized = false;
   private outputNamesLogged = false;
 
@@ -155,6 +189,8 @@ export class Pose3DDetector {
     // Disable caching for large 3D models by default
     if (config.cache === undefined) {
       this.config.cache = false;
+
+      
     }
   }
 
@@ -165,84 +201,12 @@ export class Pose3DDetector {
     if (this.initialized) return;
 
     try {
-      // Load detection model
-      console.log(`[Pose3DDetector] Loading detection model from: ${this.config.detModel}`);
-      let detBuffer: ArrayBuffer;
-
-      if (this.config.cache) {
-        const detCached = await isModelCached(this.config.detModel);
-        console.log(`[Pose3DDetector] Det model cache ${detCached ? 'hit' : 'miss'}`);
-        detBuffer = await getCachedModel(this.config.detModel);
+      // Initialize based on detector type
+      if (this.config.detectorType === 'mediapipe-rtmw3d') {
+        await this.initMediaPipe();
       } else {
-        const detResponse = await fetch(this.config.detModel);
-        if (!detResponse.ok) {
-          throw new Error(`Failed to fetch det model: HTTP ${detResponse.status}`);
-        }
-        detBuffer = await detResponse.arrayBuffer();
+        await this.initYoloxRtmw3d();
       }
-
-      this.detSession = await ort.InferenceSession.create(detBuffer, {
-        executionProviders: [this.config.backend],
-        graphOptimizationLevel: 'all',
-      });
-      console.log(`[Pose3DDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
-
-      // Load 3D pose model
-      console.log(`[Pose3DDetector] Loading 3D pose model from: ${this.config.poseModel}`);
-      let poseBuffer: ArrayBuffer;
-
-      if (this.config.cache) {
-        const poseCached = await isModelCached(this.config.poseModel);
-        console.log(`[Pose3DDetector] 3D Pose model cache ${poseCached ? 'hit' : 'miss'}`);
-        poseBuffer = await getCachedModel(this.config.poseModel);
-      } else {
-        const poseResponse = await fetch(this.config.poseModel);
-        if (!poseResponse.ok) {
-          throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
-        }
-        poseBuffer = await poseResponse.arrayBuffer();
-      }
-
-      this.poseSession = await ort.InferenceSession.create(poseBuffer, {
-        executionProviders: [this.config.backend],
-        graphOptimizationLevel: 'all',
-      });
-      console.log(`[Pose3DDetector] 3D Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
-
-      // Pre-allocate resources
-      const [detW, detH] = this.config.detInputSize;
-      this.detInputSize = [detW, detH];
-
-      const [poseW, poseH] = this.config.poseInputSize;
-      this.poseInputSize = [poseW, poseH];
-
-      // Main canvas for detection
-      this.canvas = document.createElement('canvas');
-      this.canvas.width = detW;
-      this.canvas.height = detH;
-      this.ctx = this.canvas.getContext('2d', {
-        willReadFrequently: true,
-        alpha: false
-      })!;
-
-      // Pose crop canvas
-      this.poseCanvas = document.createElement('canvas');
-      this.poseCanvas.width = poseW;
-      this.poseCanvas.height = poseH;
-      this.poseCtx = this.poseCanvas.getContext('2d', {
-        willReadFrequently: true,
-        alpha: false
-      })!;
-
-      // Pre-allocate pose tensor buffer
-      this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
-
-      // Source canvas will be created on first use (dynamic size)
-      this.srcPoseCanvas = null;
-      this.srcPoseCtx = null;
-
-      this.initialized = true;
-      console.log(`[Pose3DDetector] ✅ Initialized (det:${detW}x${detH}, pose:${poseW}x${poseH}, 3D)`);
     } catch (error) {
       console.error('[Pose3DDetector] ❌ Initialization failed:', error);
       throw error;
@@ -250,9 +214,154 @@ export class Pose3DDetector {
   }
 
   /**
+   * Initialize YOLOX + RTMW3D models (original implementation)
+   */
+  private async initYoloxRtmw3d(): Promise<void> {
+    // Load detection model
+    console.log(`[Pose3DDetector] Loading detection model from: ${this.config.detModel}`);
+    let detBuffer: ArrayBuffer;
+
+    if (this.config.cache) {
+      const detCached = await isModelCached(this.config.detModel);
+      console.log(`[Pose3DDetector] Det model cache ${detCached ? 'hit' : 'miss'}`);
+      detBuffer = await getCachedModel(this.config.detModel);
+    } else {
+      const detResponse = await fetch(this.config.detModel);
+      if (!detResponse.ok) {
+        throw new Error(`Failed to fetch det model: HTTP ${detResponse.status}`);
+      }
+      detBuffer = await detResponse.arrayBuffer();
+    }
+
+    this.detSession = await ort.InferenceSession.create(detBuffer, {
+      executionProviders: [this.config.backend],
+      graphOptimizationLevel: 'all',
+    });
+    console.log(`[Pose3DDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
+
+    // Load 3D pose model
+    console.log(`[Pose3DDetector] Loading 3D pose model from: ${this.config.poseModel}`);
+    let poseBuffer: ArrayBuffer;
+
+    if (this.config.cache) {
+      const poseCached = await isModelCached(this.config.poseModel);
+      console.log(`[Pose3DDetector] 3D Pose model cache ${poseCached ? 'hit' : 'miss'}`);
+      poseBuffer = await getCachedModel(this.config.poseModel);
+    } else {
+      const poseResponse = await fetch(this.config.poseModel);
+      if (!poseResponse.ok) {
+        throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
+      }
+      poseBuffer = await poseResponse.arrayBuffer();
+    }
+
+    this.poseSession = await ort.InferenceSession.create(poseBuffer, {
+      executionProviders: [this.config.backend],
+      graphOptimizationLevel: 'all',
+    });
+    console.log(`[Pose3DDetector] 3D Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
+
+    // Pre-allocate resources
+    const [detW, detH] = this.config.detInputSize;
+    this.detInputSize = [detW, detH];
+
+    const [poseW, poseH] = this.config.poseInputSize;
+    this.poseInputSize = [poseW, poseH];
+
+    // Main canvas for detection
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = detW;
+    this.canvas.height = detH;
+    this.ctx = this.canvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: false
+    })!;
+
+    // Pose crop canvas
+    this.poseCanvas = document.createElement('canvas');
+    this.poseCanvas.width = poseW;
+    this.poseCanvas.height = poseH;
+    this.poseCtx = this.poseCanvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: false
+    })!;
+
+    // Pre-allocate pose tensor buffer
+    this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
+
+    // Source canvas will be created on first use (dynamic size)
+    this.srcPoseCanvas = null;
+    this.srcPoseCtx = null;
+
+    this.initialized = true;
+    console.log(`[Pose3DDetector] ✅ YOLOX+RTMW3D Initialized (det:${detW}x${detH}, pose:${poseW}x${poseH}, 3D)`);
+  }
+
+  /**
+   * Initialize MediaPipe Object Detector + RTMW3D
+   */
+  private async initMediaPipe(): Promise<void> {
+    // Initialize MediaPipe Object Detector for person detection
+    this.mediaPipeObjectDetector = new MediaPipeObjectDetector({
+      modelPath: this.config.mediaPipeModelPath,
+      scoreThreshold: this.config.mediaPipeScoreThreshold,
+      maxResults: this.config.mediaPipeMaxResults,
+      categoryAllowlist: ['person'],
+      cache: this.config.cache,
+    });
+
+    await this.mediaPipeObjectDetector.init();
+
+    // Initialize RTMW3D pose model
+    let poseBuffer: ArrayBuffer;
+    if (this.config.cache) {
+      poseBuffer = await getCachedModel(this.config.poseModel);
+    } else {
+      const response = await fetch(this.config.poseModel);
+      if (!response.ok) throw new Error(`Failed to fetch pose model: HTTP ${response.status}`);
+      poseBuffer = await response.arrayBuffer();
+    }
+
+    this.poseSession = await ort.InferenceSession.create(poseBuffer, {
+      executionProviders: [this.config.backend, 'wasm'],
+      graphOptimizationLevel: 'all',
+    });
+
+    const [poseW, poseH] = this.config.poseInputSize;
+    this.poseInputSize = [poseW, poseH];
+
+    this.poseCanvas = document.createElement('canvas');
+    this.poseCanvas.width = poseW;
+    this.poseCanvas.height = poseH;
+    this.poseCtx = this.poseCanvas.getContext('2d', { willReadFrequently: true, alpha: false })!;
+    this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
+
+    this.initialized = true;
+  }
+
+  /**
    * Detect 3D poses from HTMLCanvasElement
    */
   async detectFromCanvas(canvas: HTMLCanvasElement): Promise<Wholebody3DResult> {
+    if (!this.initialized) {
+      await this.init();
+    }
+
+    // Use MediaPipe Object Detector if selected
+    if (this.config.detectorType === 'mediapipe-rtmw3d' && this.mediaPipeObjectDetector) {
+      const mpDetections = await this.mediaPipeObjectDetector.detectFromCanvas(canvas);
+      // Convert MediaPipeDetectedObject to bbox format
+      const bboxes = mpDetections.map(d => ({
+        x1: d.bbox.x1,
+        y1: d.bbox.y1,
+        x2: d.bbox.x1 + d.bbox.width,
+        y2: d.bbox.y1 + d.bbox.height,
+        confidence: d.score,
+      }));
+      return this.detect3DPosesFromMediaPipeDetections(canvas, bboxes);
+    }
+
+    // Otherwise use YOLOX+RTMW3D
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       throw new Error('Could not get 2D context from canvas');
@@ -385,9 +494,34 @@ export class Pose3DDetector {
 
     const startTime = performance.now();
 
-    // Step 1: Detect people
+    // Step 1: Detect people - use MediaPipe if selected
     const detStart = performance.now();
-    const bboxes = await this.detectPeople(imageData, width, height);
+    let bboxes: Array<{ x1: number; y1: number; x2: number; y2: number; confidence: number }>;
+
+    if (this.config.detectorType === 'mediapipe-rtmw3d' && this.mediaPipeObjectDetector) {
+      // Use MediaPipe Object Detector
+      // Create temporary canvas for MediaPipe
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = width;
+      tempCanvas.height = height;
+      const tempCtx = tempCanvas.getContext('2d')!;
+      const tempImageData = tempCtx.createImageData(width, height);
+      tempImageData.data.set(imageData);
+      tempCtx.putImageData(tempImageData, 0, 0);
+
+      const mpDetections = await this.mediaPipeObjectDetector.detectFromCanvas(tempCanvas);
+      bboxes = mpDetections.map(d => ({
+        x1: d.bbox.x1,
+        y1: d.bbox.y1,
+        x2: d.bbox.x1 + d.bbox.width,
+        y2: d.bbox.y1 + d.bbox.height,
+        confidence: d.score,
+      }));
+    } else {
+      // Use YOLOX detection
+      bboxes = await this.detectPeople(imageData, width, height);
+    }
+
     const detTime = performance.now() - detStart;
 
     // Step 2: Estimate 3D poses for each person
@@ -669,23 +803,26 @@ export class Pose3DDetector {
     const bboxWidth = bbox.x2 - bbox.x1;
     const bboxHeight = bbox.y2 - bbox.y1;
 
-    // Center of bbox (same as Python)
+    // Center of bbox
     const center: [number, number] = [
       bbox.x1 + bboxWidth / 2,
       bbox.y1 + bboxHeight / 2,
     ];
 
-    // Scale with padding (same as Python bbox_xyxy2cs with padding=1.25)
-    let scaleW = bboxWidth * 1.25;
-    let scaleH = bboxHeight * 1.25;
+    // Scale with padding (1.25 as in original rtmlib)
+    const padding = 1.25;
+    let scaleW = bboxWidth * padding;
+    let scaleH = bboxHeight * padding;
 
-    // Adjust scale to match model aspect ratio (same as top_down_affine)
+    // Adjust scale to maintain model aspect ratio (inputW/inputH = 288/384 = 0.75)
     const modelAspectRatio = inputW / inputH;
     const bboxAspectRatio = scaleW / scaleH;
 
     if (bboxAspectRatio > modelAspectRatio) {
+      // Bbox is wider - fit to width, add padding top/bottom
       scaleH = scaleW / modelAspectRatio;
     } else {
+      // Bbox is taller - fit to height, add padding left/right
       scaleW = scaleH * modelAspectRatio;
     }
 
@@ -822,10 +959,25 @@ export class Pose3DDetector {
       keypointsSimcc.push([normX, normY, normZ]);
 
       // 2D coordinates in original image space
-      // Convert from normalized SimCC coords [0, 1] to crop space, then to image space
-      // Formula: kpt = center - scale/2 + norm * scale (same as in rtmpose3d.ts)
-      const kpt2dX = normX * scale[0] + center[0] - 0.5 * scale[0];
-      const kpt2dY = normY * scale[1] + center[1] - 0.5 * scale[1];
+      // Model output is in normalized SimCC space [0, 1]
+      // To convert back: first map to crop space (with padding), then to image space
+      // 
+      // The crop was taken with:
+      //   srcX = center[0] - scale[0] / 2
+      //   srcY = center[1] - scale[1] / 2
+      // where scale includes padding (1.25) and aspect ratio adjustment
+      //
+      // Model was trained on 288x384 input, so:
+      //   - normX=0 corresponds to left edge of crop
+      //   - normX=1 corresponds to right edge of crop
+      //   - normY=0 corresponds to top edge of crop
+      //   - normY=1 corresponds to bottom edge of crop
+      //
+      // So: kpt2d = srcOrigin + norm * scale
+      const srcX = center[0] - scale[0] / 2;
+      const srcY = center[1] - scale[1] / 2;
+      const kpt2dX = srcX + normX * scale[0];
+      const kpt2dY = srcY + normY * scale[1];
 
       // Clamp to image bounds
       const clampedX = Math.max(0, Math.min(imgWidth, kpt2dX));
@@ -886,5 +1038,79 @@ export class Pose3DDetector {
     const union = area1 + area2 - intersection;
 
     return intersection / union;
+  }
+
+  /**
+   * Detect MediaPipe poses and convert to 3D-like format
+   * Note: This method is deprecated - use detect3DPosesFromMediaPipeDetections instead
+   * @deprecated Use MediaPipePoseDetector directly or MediaPipeObject3DPoseDetector
+   */
+  private async detectMediaPipeFromCanvas(canvas: HTMLCanvasElement): Promise<Wholebody3DResult> {
+    throw new Error('This method is deprecated. Use detect3DPosesFromMediaPipeDetections instead.');
+  }
+
+  /**
+   * Detect 3D poses from MediaPipe detections
+   */
+  private async detect3DPosesFromMediaPipeDetections(
+    canvas: HTMLCanvasElement,
+    mpDetections: Array<{ x1: number; y1: number; x2: number; y2: number; confidence: number }>
+  ): Promise<Wholebody3DResult> {
+    // For each detected person, estimate 3D pose using RTMW3D
+    const allKeypoints: number[][][] = [];
+    const allScores: number[][] = [];
+    const allKeypointsSimcc: number[][][] = [];
+    const allKeypoints2d: number[][][] = [];
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Could not get 2D context from canvas');
+    }
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const imgData = new Uint8Array(imageData.data.buffer);
+
+    for (const bbox of mpDetections) {
+      const poseResult = await this.estimatePose3D(imgData, canvas.width, canvas.height, bbox);
+      allKeypoints.push(poseResult.keypoints);
+      allScores.push(poseResult.scores);
+      allKeypointsSimcc.push(poseResult.keypointsSimcc);
+      allKeypoints2d.push(poseResult.keypoints2d);
+    }
+
+    const result: Wholebody3DResult = {
+      keypoints: allKeypoints,
+      scores: allScores,
+      keypointsSimcc: allKeypointsSimcc,
+      keypoints2d: allKeypoints2d,
+    };
+
+    (result as any).stats = {
+      personCount: allKeypoints.length,
+      detTime: 0,
+      poseTime: 0,
+      totalTime: 0,
+    };
+
+    return result;
+  }
+
+  /**
+   * Dispose resources
+   */
+  dispose(): void {
+    if (this.detSession) {
+      this.detSession.release();
+      this.detSession = null;
+    }
+    if (this.poseSession) {
+      this.poseSession.release();
+      this.poseSession = null;
+    }
+    if (this.mediaPipeObjectDetector) {
+      this.mediaPipeObjectDetector.dispose();
+      this.mediaPipeObjectDetector = null;
+    }
+    this.initialized = false;
   }
 }

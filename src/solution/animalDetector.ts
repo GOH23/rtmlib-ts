@@ -20,8 +20,9 @@
  * ```
  */
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/all';
 import { getCachedModel, isModelCached } from '../core/modelCache';
+import type { WebNNProviderOptions } from '../types/index';
 
 // Configure ONNX Runtime Web
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
@@ -118,7 +119,13 @@ export interface AnimalDetectorConfig {
   /** Pose keypoint confidence threshold (default: 0.3) */
   poseConfidence?: number;
   /** Execution backend (default: 'wasm') */
-  backend?: 'wasm' | 'webgpu';
+  backend?: 'wasm' | 'webgl' | 'webgpu' | 'webnn';
+  /** WebNN provider options (only used when backend is 'webnn') */
+  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  /** Device type for WebNN/WebGPU (default: 'gpu' for high performance) */
+  deviceType?: 'cpu' | 'gpu' | 'npu';
+  /** Power preference for WebNN/WebGPU (default: 'high-performance') */
+  powerPreference?: 'default' | 'low-power' | 'high-performance';
   /** Enable model caching (default: true) */
   cache?: boolean;
   /** Animal classes to detect (null = all) */
@@ -200,9 +207,10 @@ const KEYPOINT_NAMES = [
 /**
  * Default configuration - uses ViTPose++-b model
  */
-const DEFAULT_CONFIG: Required<Omit<AnimalDetectorConfig, 'poseModel' | 'poseModelType'>> & {
+const DEFAULT_CONFIG: Omit<Required<Omit<AnimalDetectorConfig, 'poseModel' | 'poseModelType'>>, 'webnnOptions'> & {
   poseModel?: string;
   poseModelType: VitPoseModelType;
+  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
 } = {
   detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   poseModel: undefined,  // Will be set from poseModelType
@@ -213,12 +221,19 @@ const DEFAULT_CONFIG: Required<Omit<AnimalDetectorConfig, 'poseModel' | 'poseMod
   nmsThreshold: 0.45,
   poseConfidence: 0.3,
   backend: 'webgpu',  // Default to WebGPU for better performance
+  webnnOptions: undefined as import('../types/index').WebNNProviderOptionsOrUndefined,
+  deviceType: 'gpu',
+  powerPreference: 'high-performance',
   cache: true,
   classes: null,
 };
 
 export class AnimalDetector {
-  private config: Required<AnimalDetectorConfig>;
+  private config: Omit<Required<AnimalDetectorConfig>, 'webnnOptions' | 'poseModel' | 'poseModelType'> & {
+    webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+    poseModel?: string;
+    poseModelType: VitPoseModelType;
+  };
   private detSession: ort.InferenceSession | null = null;
   private poseSession: ort.InferenceSession | null = null;
   private initialized = false;
@@ -320,32 +335,88 @@ export class AnimalDetector {
         detBuffer = await detResponse.arrayBuffer();
       }
 
+      // Build execution providers with WebNN options
+      const detExecProviders: any[] = [];
+      
+      if (this.config.backend === 'webnn') {
+        const webnnOptions = {
+          name: 'webnn' as const,
+          deviceType: this.config.deviceType || 'gpu',
+          powerPreference: this.config.powerPreference || 'high-performance',
+        };
+        detExecProviders.push(webnnOptions);
+        console.log(`[AnimalDetector] ✅ Detection model using WebNN: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
+      } else if (this.config.backend === 'webgpu') {
+        // Check if WebGPU is available
+        if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
+          detExecProviders.push('webgpu');
+          console.log(`[AnimalDetector] ✅ Detection model using WebGPU`);
+        } else {
+          console.warn(`[AnimalDetector] ⚠️ WebGPU not available, falling back to WebGL`);
+          detExecProviders.push('webgl');
+        }
+      } else {
+        detExecProviders.push(this.config.backend);
+        console.log(`[AnimalDetector] ✅ Detection model using backend: ${this.config.backend}`);
+      }
+
+      console.log(`[AnimalDetector] Detection execution providers: ${JSON.stringify(detExecProviders)}`);
+
       this.detSession = await ort.InferenceSession.create(detBuffer, {
-        executionProviders: [this.config.backend],
+        executionProviders: detExecProviders,
         graphOptimizationLevel: 'all',
       });
+      console.log(`[AnimalDetector] ✅ Detection session created successfully`);
       console.log(`[AnimalDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
       // Load pose model
-      console.log(`[AnimalDetector] Loading pose model from: ${this.config.poseModel}`);
+      const poseModelPath = this.config.poseModel!;
+      console.log(`[AnimalDetector] Loading pose model from: ${poseModelPath}`);
       let poseBuffer: ArrayBuffer;
 
       if (this.config.cache) {
-        const poseCached = await isModelCached(this.config.poseModel);
+        const poseCached = await isModelCached(poseModelPath);
         console.log(`[AnimalDetector] Pose model cache ${poseCached ? 'hit' : 'miss'}`);
-        poseBuffer = await getCachedModel(this.config.poseModel);
+        poseBuffer = await getCachedModel(poseModelPath);
       } else {
-        const poseResponse = await fetch(this.config.poseModel);
+        const poseResponse = await fetch(poseModelPath);
         if (!poseResponse.ok) {
           throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
         }
         poseBuffer = await poseResponse.arrayBuffer();
       }
 
+      const poseExecProviders: any[] = [];
+      
+      if (this.config.backend === 'webnn') {
+        const webnnOptions = {
+          name: 'webnn' as const,
+          deviceType: this.config.deviceType || 'gpu',
+          powerPreference: this.config.powerPreference || 'high-performance',
+        };
+        poseExecProviders.push(webnnOptions);
+        console.log(`[AnimalDetector] ✅ Pose model using WebNN: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
+      } else if (this.config.backend === 'webgpu') {
+        // Check if WebGPU is available
+        if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
+          poseExecProviders.push('webgpu');
+          console.log(`[AnimalDetector] ✅ Pose model using WebGPU`);
+        } else {
+          console.warn(`[AnimalDetector] ⚠️ WebGPU not available, falling back to WebGL`);
+          poseExecProviders.push('webgl');
+        }
+      } else {
+        poseExecProviders.push(this.config.backend);
+        console.log(`[AnimalDetector] ✅ Pose model using backend: ${this.config.backend}`);
+      }
+
+      console.log(`[AnimalDetector] Pose execution providers: ${JSON.stringify(poseExecProviders)}`);
+
       this.poseSession = await ort.InferenceSession.create(poseBuffer, {
-        executionProviders: [this.config.backend],
+        executionProviders: poseExecProviders,
         graphOptimizationLevel: 'all',
       });
+      console.log(`[AnimalDetector] ✅ Pose session created successfully`);
       console.log(`[AnimalDetector] Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
       // Pre-allocate resources

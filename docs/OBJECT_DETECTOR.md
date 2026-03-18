@@ -4,9 +4,27 @@ Universal multi-class object detection API supporting all 80 COCO classes.
 
 ## Overview
 
-`ObjectDetector` provides a simple, unified interface for detecting objects in images, videos, and live camera feeds. Supports YOLO12 and other YOLO models.
+`ObjectDetector` provides a simple, unified interface for detecting objects in images, videos, and live camera feeds. Supports **YOLO12** and **MediaPipe EfficientDet**.
 
 **Model is loaded automatically from HuggingFace if not specified.**
+
+## 🆕 MediaPipe Support (FASTER!)
+
+Now you can use MediaPipe TFLite models for faster inference:
+
+```typescript
+import { ObjectDetector } from 'rtmlib-ts';
+
+const detector = new ObjectDetector({
+  detectorType: 'mediapipe',  // or 'yolo'
+  mediaPipeModelPath: 'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0.tflite',
+  mediaPipeScoreThreshold: 0.5,
+  classes: ['person', 'car'],
+});
+await detector.init();
+```
+
+See [MediaPipe Detector API](MEDIAPIPE_DETECTOR.md) for more details.
 
 ## Installation
 
@@ -102,8 +120,12 @@ new ObjectDetector(config?: ObjectDetectorConfig)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `model` | `string` | optional | Path to YOLO model |
-| `inputSize` | `[number, number]` | `[416, 416]` | Input size |
+| `detectorType` | `'yolo' \| 'mediapipe'` | `'yolo'` | Detector backend type |
+| `model` | `string` | optional | Path to YOLO model (for YOLO type) |
+| `mediaPipeModelPath` | `string` | optional | Path to MediaPipe TFLite model |
+| `mediaPipeScoreThreshold` | `number` | `0.5` | MediaPipe confidence threshold |
+| `mediaPipeMaxResults` | `number` | `-1` | MediaPipe max detections (-1 for all) |
+| `inputSize` | `[number, number]` | `[416, 416]` | Input size (YOLO only) |
 | `confidence` | `number` | `0.5` | Confidence threshold |
 | `nmsThreshold` | `number` | `0.45` | NMS IoU threshold |
 | `classes` | `string[] \| null` | `['person']` | Classes to detect |

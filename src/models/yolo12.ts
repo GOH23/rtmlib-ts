@@ -6,25 +6,24 @@
  */
 
 import { BaseTool } from '../core/base';
-import { BBox, Detection, BackendType } from '../types/index';
+import { BBox, Detection } from '../types/index';
 
 export class YOLO12 extends BaseTool {
   private nmsThr: number;
   public scoreThr: number;
-  private initialized: boolean = false;
-  private paddingX: number = 0;
-  private paddingY: number = 0;
-  private scaleX: number = 1;
-  private scaleY: number = 1;
+  private initialized = false;
+  private paddingX = 0;
+  private paddingY = 0;
+  private scaleX = 1;
+  private scaleY = 1;
 
   constructor(
     modelPath: string,
     modelInputSize: [number, number] = [640, 640],
     nmsThr: number = 0.45,
-    scoreThr: number = 0.5,
-    backend: BackendType = 'webgpu'
+    scoreThr: number = 0.5
   ) {
-    super(modelPath, modelInputSize, null, null, backend);
+    super(modelPath, modelInputSize);
     this.nmsThr = nmsThr;
     this.scoreThr = scoreThr;
   }

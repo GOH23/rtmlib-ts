@@ -22,8 +22,9 @@
  * ```
  */
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/all';
 import { getCachedModel, isModelCached } from '../core/modelCache';
+import type { WebNNProviderOptions } from '../types/index';
 
 // Configure ONNX Runtime Web
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
@@ -47,7 +48,13 @@ export interface CustomDetectorConfig {
   /** Custom postprocessing function */
   postprocessing?: (outputs: Record<string, ort.Tensor>, metadata: any) => any;
   /** Execution backend (default: 'wasm') */
-  backend?: 'wasm' | 'webgpu';
+  backend?: 'wasm' | 'webgl' | 'webgpu' | 'webnn';
+  /** WebNN provider options (only used when backend is 'webnn') */
+  webnnOptions?: WebNNProviderOptions;
+  /** Device type for WebNN/WebGPU (default: 'gpu' for high performance) */
+  deviceType?: 'cpu' | 'gpu' | 'npu';
+  /** Power preference for WebNN/WebGPU (default: 'high-performance') */
+  powerPreference?: 'default' | 'low-power' | 'high-performance';
   /** Enable model caching (default: true) */
   cache?: boolean;
   /** Custom metadata for postprocessing */
@@ -132,8 +139,20 @@ export class CustomDetector {
         modelBuffer = await response.arrayBuffer();
       }
 
+      // Build execution providers with WebNN options
+      const execProviders: any[] = [];
+      if (this.config.backend === 'webnn') {
+        execProviders.push({
+          name: 'webnn',
+          deviceType: this.config.deviceType || 'gpu',
+          powerPreference: this.config.powerPreference || 'high-performance',
+        });
+      } else {
+        execProviders.push(this.config.backend);
+      }
+
       this.session = await ort.InferenceSession.create(modelBuffer, {
-        executionProviders: [this.config.backend],
+        executionProviders: execProviders,
         graphOptimizationLevel: 'all',
       });
 

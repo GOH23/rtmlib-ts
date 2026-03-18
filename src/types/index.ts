@@ -48,8 +48,8 @@ export interface ModelConfig {
 
 export type ModeType = 'performance' | 'lightweight' | 'balanced';
 
-export type BackendType = 'opencv' | 'onnxruntime' | 'openvino' | 'wasm' | 'webgpu';
-export type DeviceType = 'cpu' | 'cuda' | 'mps' | string;
+export type BackendType = 'opencv' | 'onnxruntime' | 'openvino' | 'wasm' | 'webgl' | 'webgpu' | 'webnn';
+export type DeviceType = 'cpu' | 'gpu' | 'mps' | 'npu' | string;
 
 export interface ImageData {
   data: Uint8Array;
@@ -60,3 +60,11 @@ export interface ImageData {
 
 export type RGBImage = ImageData;
 export type BGRImage = ImageData;
+
+export interface WebNNProviderOptions {
+  name: 'webnn';
+  deviceType?: 'cpu' | 'gpu' | 'npu';
+  powerPreference?: 'default' | 'low-power' | 'high-performance';
+}
+
+export type WebNNProviderOptionsOrUndefined = WebNNProviderOptions | undefined;

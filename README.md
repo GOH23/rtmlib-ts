@@ -2,16 +2,20 @@
 
 **Real-time Multi-Person Pose Estimation & Object Detection Library**
 
-TypeScript port of [rtmlib](https://github.com/Tau-J/rtmlib) with YOLO12 support for browser-based AI inference.
+TypeScript port of [rtmlib](https://github.com/Tau-J/rtmlib) with YOLO12 and MediaPipe support for browser-based AI inference.
 
 ## 🚀 Features
 
-- 🎯 **Object Detection** - 80 COCO classes with YOLO12n
-- 🧘 **Pose Estimation** - 17 keypoints skeleton tracking
+- 🎯 **Object Detection** - 80 COCO classes with YOLO12n or MediaPipe EfficientDet
+- 🧘 **Pose Estimation (2D)** - 17 keypoints (COCO) with RTMW or 33 keypoints with MediaPipe BlazePose
+- 🎯 **Pose Estimation (3D)** - Full 3D pose with Z-coordinates in meters using RTMW3D-X
+- 🐾 **Animal Detection** - 30 animal species with ViTPose++ pose estimation
+- 🎮 **MediaPipe Integration** - TFLite backend for faster inference
+- ⚡ **Fastest Combo** - MediaPipe + RTMW3D for 2-3x faster 3D pose estimation
 - 📹 **Video Support** - Real-time camera & video file processing
-- 🌐 **Browser-based** - Pure WebAssembly, no backend required
+- 🌐 **Browser-based** - Pure WebAssembly/WebGL/WebGPU, no backend required
 - ⚡ **Fast** - Optimized for ~200ms inference (416×416)
-- 🎨 **Beautiful UI** - Modern gradient design
+- 🎨 **Beautiful UI** - Modern gradient design in playground
 
 ## 📦 Installation
 
@@ -24,111 +28,100 @@ npm install rtmlib-ts
 ### 1. Try the Playground
 
 ```bash
-cd playground
+cd rtmlib-playground-main
 npm install
 npm run dev
 
 # Open http://localhost:3000
 ```
 
-### 2. Object Detection
+### 2. Object Detection (YOLO)
 
 ```typescript
 import { ObjectDetector, drawResultsOnCanvas } from 'rtmlib-ts';
 
-// Initialize
 const detector = new ObjectDetector({
   model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
-  classes: ['person', 'car', 'dog'],  // Filter classes or null for all
+  classes: ['person', 'car', 'dog'],
   confidence: 0.5,
-  inputSize: [416, 416],  // 416 for speed, 640 for accuracy
-  backend: 'wasm',
+  inputSize: [416, 416],
+  backend: 'webgl',
 });
-
 await detector.init();
 
-// Detect from canvas
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const results = await detector.detectFromCanvas(canvas);
-
-// Draw results
-const ctx = canvas.getContext('2d')!;
 drawResultsOnCanvas(ctx, results, 'object');
-
-console.log(`Found ${results.length} objects`);
-results.forEach(obj => {
-  console.log(`${obj.className}: ${(obj.confidence * 100).toFixed(1)}%`);
-});
 ```
 
-### 3. Pose Estimation
-
-```typescript
-import { PoseDetector, drawResultsOnCanvas } from 'rtmlib-ts';
-
-// Initialize
-const poseDetector = new PoseDetector({
-  detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
-  poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
-  detInputSize: [416, 416],
-  detConfidence: 0.5,
-  poseConfidence: 0.3,
-  backend: 'wasm',
-});
-
-await poseDetector.init();
-
-// Detect poses
-const results = await poseDetector.detectFromCanvas(canvas);
-
-// Draw skeleton
-const ctx = canvas.getContext('2d')!;
-drawResultsOnCanvas(ctx, results, 'pose');
-
-console.log(`Found ${results.length} people`);
-results.forEach(person => {
-  const visibleKpts = person.keypoints.filter(k => k.visible).length;
-  console.log(`Person: ${visibleKpts}/17 keypoints visible`);
-});
-```
-
-### 4. Real-time Video
+### 3. Object Detection (MediaPipe - FASTER!)
 
 ```typescript
 import { ObjectDetector } from 'rtmlib-ts';
 
 const detector = new ObjectDetector({
-  model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
-  inputSize: [416, 416],  // Faster for video
+  detectorType: 'mediapipe',
+  mediaPipeModelPath: 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite',
+  mediaPipeScoreThreshold: 0.5,
+  classes: ['person', 'car'],
 });
 await detector.init();
 
-// Camera stream
-const video = document.querySelector('video')!;
-const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-video.srcObject = stream;
-
-// Detection loop (every 500ms)
-setInterval(async () => {
-  const results = await detector.detectFromVideo(video);
-  console.log(`Detected: ${results.map(r => r.className).join(', ')}`);
-}, 500);
+const results = await detector.detectFromCanvas(canvas);
 ```
 
-### 5. Image Upload
+### 4. Pose Estimation (2D)
 
 ```typescript
-// File input
-<input type="file" accept="image/*" onChange={handleFile} />
+import { PoseDetector, drawResultsOnCanvas } from 'rtmlib-ts';
 
-// Handler
-const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  
-  const results = await detector.detectFromFile(file);
-  console.log(`Found ${results.length} objects`);
-};
+const detector = new PoseDetector({
+  detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+  poseModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx',
+  detInputSize: [416, 416],
+  poseInputSize: [384, 288],
+  detConfidence: 0.5,
+  poseConfidence: 0.3,
+  backend: 'webgl',
+});
+await detector.init();
+
+const poses = await detector.detectFromCanvas(canvas);
+drawResultsOnCanvas(ctx, poses, 'pose');
+```
+
+### 5. Pose Estimation (3D) - FASTEST with MediaPipe!
+
+```typescript
+import { MediaPipeObject3DPoseDetector } from 'rtmlib-ts';
+
+// MediaPipe + RTMW3D = 2-3x faster than YOLO+3D!
+const detector = new MediaPipeObject3DPoseDetector({
+  mpScoreThreshold: 0.5,
+  poseConfidence: 0.3,
+  backend: 'webgpu',
+  personsOnly: true,
+});
+await detector.init();
+
+const result = await detector.detectFromCanvas(canvas);
+console.log(result.keypoints[0][0]); // [x, y, z] in meters
+```
+
+### 6. Animal Detection
+
+```typescript
+import { AnimalDetector } from 'rtmlib-ts';
+
+const detector = new AnimalDetector({
+  poseModelType: 'vitpose-b',
+  classes: ['dog', 'cat', 'horse'],
+  detConfidence: 0.5,
+  poseConfidence: 0.3,
+  backend: 'webgl',
+});
+await detector.init();
+
+const animals = await detector.detectFromCanvas(canvas);
 ```
 
 ## 📊 Performance
@@ -137,36 +130,39 @@ const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
 |-------|-------|------|----------|
 | YOLO12n | 416×416 | ~200ms | Real-time video |
 | YOLO12n | 640×640 | ~500ms | High accuracy |
+| MediaPipe EfficientDet | 320×320 | ~100ms | Fast detection |
 | RTMW Pose | 384×288 | ~100ms | Per person |
+| **MediaPipe + RTMW3D** | 320×320 + 384×288 | **~150ms** | **Fastest 3D pose!** |
 
 **Optimization Tips:**
-- Use 416×416 for video/real-time
-- Use 640×640 for static images
+- Use `416×416` for video/real-time
+- Use `640×640` for static images
+- **MediaPipe + RTMW3D** for fastest 3D pose estimation
 - First run is slower (WASM compilation)
 - Filter classes to reduce processing
+- Use `backend: 'webgpu'` for GPU acceleration
 
 ## 🎯 Supported Classes (COCO 80)
 
 **Common:** person, car, dog, cat, bicycle, bus, truck  
 **Objects:** bottle, chair, couch, potted plant  
 **Animals:** bird, horse, sheep, cow, elephant  
-**Full list:** See `COCO_CLASSES` export
+**Full list:** See `COCO_CLASSES` export or use class selector in playground
+
+## 🐾 Animal Detection (30 Species)
+
+**Supported:** dog, cat, horse, zebra, elephant, tiger, lion, panda, cow, sheep, bird, and more!
 
 ## 🎨 Drawing Utilities
 
 ```typescript
-import { 
+import {
   drawDetectionsOnCanvas,
   drawPoseOnCanvas,
-  drawResultsOnCanvas  // Universal
+  drawResultsOnCanvas
 } from 'rtmlib-ts';
 
-// Auto-detects mode
-drawResultsOnCanvas(ctx, results, 'object');  // or 'pose'
-
-// Custom drawing
-drawDetectionsOnCanvas(ctx, detections, '#00ff00');
-drawPoseOnCanvas(ctx, people, 0.3);  // 0.3 confidence threshold
+drawResultsOnCanvas(ctx, results, 'object');  // or 'pose', 'pose3d'
 ```
 
 ## 📁 Project Structure
@@ -174,22 +170,50 @@ drawPoseOnCanvas(ctx, people, 0.3);  // 0.3 confidence threshold
 ```
 rtmlib-ts/
 ├── src/
-│   ├── solution/
-│   │   ├── objectDetector.ts   # Object detection
-│   │   └── poseDetector.ts     # Pose estimation
-│   └── visualization/
-│       └── draw.ts             # Canvas utilities
-├── playground/                  # Next.js demo
-└── models/
-    ├── yolo/yolov12n.onnx      # Detector
-    └── rtmpose/end2end.onnx    # Pose model
+│   ├── core/                    # Base utilities
+│   │   ├── base.ts              # BaseTool class
+│   │   ├── modelCache.ts        # Model caching
+│   │   └── preprocessing.ts     # Image preprocessing
+│   ├── models/                  # Model implementations
+│   │   ├── yolo12.ts            # YOLO12 detector
+│   │   ├── rtmpose.ts           # RTMPose model
+│   │   └── rtmpose3d.ts         # 3D Pose model
+│   ├── solution/                # High-level APIs
+│   │   ├── objectDetector.ts    # ObjectDetector (80 COCO)
+│   │   ├── poseDetector.ts      # PoseDetector (YOLO + RTMW)
+│   │   ├── pose3dDetector.ts    # Pose3DDetector
+│   │   ├── animalDetector.ts    # AnimalDetector (ViTPose)
+│   │   ├── mediaPipeObjectDetector.ts  # MediaPipe Object Detection
+│   │   ├── mediaPipePoseDetector.ts    # MediaPipe Pose Landmarker
+│   │   └── mediaPipeObject3DPoseDetector.ts  # MediaPipe + RTMW3D
+│   ├── types/                   # TypeScript types
+│   └── visualization/           # Canvas drawing
+├── docs/                        # API documentation
+├── rtmlib-playground-main/      # Next.js demo app
+└── README.md
 ```
+
+## 🧩 Detector Types
+
+### Object Detection
+- **YOLO** - YOLO12n ONNX model (accurate)
+- **MediaPipe** - EfficientDet TFLite model (fast)
+
+### Pose Estimation
+- **YOLO + RTMW** - YOLO12 + RTMWpose (accurate 2D)
+- **MediaPipe** - BlazePose with 33 keypoints (fast 2D)
+- **YOLO + RTMW3D** - YOLO12 + RTMW3D-X (accurate 3D)
+- **MediaPipe + RTMW3D** - EfficientDet + RTMW3D-X (⚡ fastest 3D!)
+
+### Animal Detection
+- **ViTPose-S/B/L** - Small/Base/Large models for 30 animal species
 
 ## 🐛 Known Issues
 
 - **YOLOv26n**: Requires model re-export (format mismatch)
 - **First run**: Slow due to WASM compilation
 - **Mobile**: Performance varies by device
+- **WebGPU**: Requires browser support (Chrome 113+)
 
 ## 📝 License
 
@@ -199,4 +223,13 @@ Apache 2.0
 
 Based on [rtmlib](https://github.com/Tau-J/rtmlib) by Tao Jiang  
 YOLO12 by [Ultralytics](https://ultralytics.com)  
-RTMW by [OpenMMLab](https://openmmlab.com)
+RTMW by [OpenMMLab](https://openmmlab.com)  
+MediaPipe by [Google](https://developers.google.com/mediapipe)
+
+## 📚 Documentation
+
+- [ObjectDetector API](docs/OBJECT_DETECTOR.md)
+- [PoseDetector API](docs/POSE_DETECTOR.md)
+- [Pose3DDetector API](docs/POSE3D_DETECTOR.md)
+- [AnimalDetector API](docs/ANIMAL_DETECTOR.md)
+- [CustomDetector API](docs/CUSTOM_DETECTOR.md)
