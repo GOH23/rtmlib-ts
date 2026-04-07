@@ -21,6 +21,7 @@ import * as ort from 'onnxruntime-web/all';
 import { FilesetResolver, ObjectDetector as MPObjectDetector } from '@mediapipe/tasks-vision';
 import { getCachedModel, isModelCached } from '../core/modelCache';
 import { loadMediaPipeModelWithCache } from '../core/mediaPipeCache';
+import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
 
 /**
  * 3D pose detection result
@@ -38,10 +39,8 @@ export interface Wholebody3DResult {
   };
 }
 
-// Configure ONNX Runtime Web
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
-ort.env.wasm.simd = true;
-ort.env.wasm.proxy = false;
+// Configure ONNX Runtime Web (only in browser environment)
+initOnnxRuntimeWeb();
 
 /**
  * Configuration options for MediaPipeObject3DPoseDetector

@@ -23,6 +23,7 @@
 import * as ort from 'onnxruntime-web/all';
 import { getCachedModel, isModelCached } from '../core/modelCache';
 import { MediaPipeObjectDetector } from './mediaPipeObjectDetector';
+import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
 
 /**
  * 3D pose detection result
@@ -40,10 +41,8 @@ export interface Wholebody3DResult {
   };
 }
 
-// Configure ONNX Runtime Web
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@latest/dist/';
-ort.env.wasm.simd = true;
-ort.env.wasm.proxy = false;
+// Configure ONNX Runtime Web (only in browser environment)
+initOnnxRuntimeWeb();
 
 /**
  * Backend type for Pose3DDetector

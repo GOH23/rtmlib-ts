@@ -30,11 +30,10 @@ import * as ort from 'onnxruntime-web/all';
 import { BBox, Detection, type WebNNProviderOptions } from '../types/index';
 import { getCachedModel, isModelCached } from '../core/modelCache';
 import { MediaPipeObjectDetector } from './mediaPipeObjectDetector';
+import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
 
-// Configure ONNX Runtime Web
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/';
-ort.env.wasm.simd = true;
-ort.env.wasm.proxy = false;
+// Configure ONNX Runtime Web (only in browser environment)
+initOnnxRuntimeWeb();
 
 /**
  * Backend type for PoseDetector

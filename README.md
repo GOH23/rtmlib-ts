@@ -23,6 +23,123 @@ TypeScript port of [rtmlib](https://github.com/Tau-J/rtmlib) with YOLO12 and Med
 npm install rtmlib-ts
 ```
 
+## 🔧 Next.js Integration
+
+This library is designed for **browser-only** environments and requires special handling for Next.js applications.
+
+### ⚠️ Important: Server-Side Rendering (SSR)
+
+rtmlib-ts depends on browser APIs (`window`, `document`, `navigator`) and cannot run during server-side rendering. Use these approaches to integrate with Next.js:
+
+### Method 1: Client Components (Recommended)
+
+```tsx
+// app/components/PoseDetector.tsx
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { PoseDetector as PoseDetectorLib, drawResultsOnCanvas } from 'rtmlib-ts';
+
+export default function PoseDetector() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [detector, setDetector] = useState<PoseDetectorLib | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Initialize detector only in browser
+    const poseDetector = new PoseDetectorLib({
+    });
+    
+    poseDetector.init().then(() => {
+      setDetector(poseDetector);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleDetect = async () => {
+    if (!detector || !canvasRef.current) return;
+    
+    const results = await detector.detectFromCanvas(canvasRef.current);
+    const ctx = canvasRef.current.getContext('2d');
+    if (ctx) {
+      drawResultsOnCanvas(ctx, results, 'pose');
+    }
+  };
+
+  if (loading) return <div>Loading detector...</div>;
+
+  return (
+    <div>
+      <canvas ref={canvasRef} width={640} height={480} />
+      <button onClick={handleDetect}>Detect Pose</button>
+    </div>
+  );
+}
+```
+
+### Method 2: Dynamic Import with SSR Disabled
+
+```tsx
+// app/page.tsx
+import dynamic from 'next/dynamic';
+
+const PoseDetector = dynamic(
+  () => import('./components/PoseDetector'),
+  { ssr: false } // Disable server-side rendering
+);
+
+export default function Home() {
+  return (
+    <main>
+      <h1>Pose Detection App</h1>
+      <PoseDetector />
+    </main>
+  );
+}
+```
+
+### Method 3: Environment Detection Utilities
+
+Use built-in helpers to safely handle SSR:
+
+```tsx
+'use client';
+
+import { isBrowser, isSSR, initOnnxRuntimeWeb } from 'rtmlib-ts';
+
+useEffect(() => {
+  if (isSSR()) {
+    console.log('Running on server - skipping initialization');
+    return;
+  }
+
+  if (isBrowser()) {
+    // Safe to use browser APIs
+    initOnnxRuntimeWeb();
+    // Initialize detectors here
+  }
+}, []);
+```
+
+### Next.js Configuration (Optional)
+
+If you encounter issues with ONNX Runtime Web WASM files, add to `next.config.js`:
+
+```js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  webpack: (config) => {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    };
+    return config;
+  },
+};
+
+module.exports = nextConfig;
+```
+
 ## 🎮 Quick Start
 
 ### 1. Try the Playground

@@ -28,6 +28,20 @@ export {
   getCacheInfo,
 } from './core/modelCache';
 
+// Environment detection utilities
+export {
+  isBrowser,
+  isSSR,
+  getDocument,
+  createCanvas,
+} from './core/environment';
+
+// ONNX Runtime Web initialization
+export {
+  initOnnxRuntimeWeb,
+  getOnnxRuntime,
+} from './core/onnxRuntime';
+
 // MediaPipe cache utilities
 export {
   cacheMediaPipeModel,

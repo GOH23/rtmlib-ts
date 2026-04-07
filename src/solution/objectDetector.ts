@@ -29,11 +29,10 @@ import * as ort from 'onnxruntime-web/all';
 import { getCachedModel, isModelCached } from '../core/modelCache';
 import { MediaPipeObjectDetector, MediaPipeDetectedObject } from './mediaPipeObjectDetector';
 import type { WebNNProviderOptions } from '../types/index';
+import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
 
-// Configure ONNX Runtime Web
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@latest/dist/';
-ort.env.wasm.simd = true;
-ort.env.wasm.proxy = false;
+// Configure ONNX Runtime Web (only in browser environment)
+initOnnxRuntimeWeb();
 
 /**
  * COCO 80-class names
