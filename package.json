@@ -1,14 +1,12 @@
 {
   "name": "rtmlib-ts",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "High-performance browser-based AI library for real-time object detection (YOLO12) and pose estimation (RTMW) using ONNX Runtime Web",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "playground": "npm i && cd playground && npm run build"
+    "build": "tsc"
   },
   "files": [
     "dist"
@@ -30,7 +28,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GOH23/rtmlib-ts"
+    "url": "git+https://github.com/GOH23/rtmlib-ts.git"
   },
   "bugs": {
     "url": "https://github.com/GOH23/rtmlib-ts/issues"

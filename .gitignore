@@ -5,3 +5,4 @@ dist/
 *.mp4
 .cache/
 .rtmlib/
+package-lock.json
