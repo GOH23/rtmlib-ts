@@ -19,8 +19,12 @@
  */
 
 import { FilesetResolver, ObjectDetector as MPObjectDetector } from '@mediapipe/tasks-vision';
-import type { ObjectDetector as MPObjectDetectorType } from '@mediapipe/tasks-vision';
+import { createLogger } from '../core/logger';
 import { loadMediaPipeModelWithCache } from '../core/mediaPipeCache';
+import { loadBitmapFromBlob, loadImageFromFile } from '../core/sourceLoaders';
+import { attachStats } from '../core/stats';
+
+const log = createLogger('MediaPipeObjectDetector');
 
 /**
  * Detected object with bounding box and class
@@ -138,8 +142,16 @@ export class MediaPipeObjectDetector {
         },
         scoreThreshold: this.config.scoreThreshold,
         maxResults: this.config.maxResults,
-        categoryAllowlist: this.config.categoryAllowlist.length > 0 ? this.config.categoryAllowlist : undefined,
-        categoryDenylist: this.config.categoryDenylist.length > 0 ? this.config.categoryDenylist : undefined,
+        // Guard: callers (e.g. ObjectDetector.initMediaPipe) sometimes pass
+        // `undefined` to override the default `[]`, and `{...defaults, ...x}`
+        // makes the override stick. Without these guards the spread leaves
+        // `categoryAllowlist` undefined and `.length` throws.
+        categoryAllowlist: (this.config.categoryAllowlist ?? []).length > 0
+          ? this.config.categoryAllowlist
+          : undefined,
+        categoryDenylist: (this.config.categoryDenylist ?? []).length > 0
+          ? this.config.categoryDenylist
+          : undefined,
         runningMode: this.config.runningMode,
       });
 
@@ -147,7 +159,7 @@ export class MediaPipeObjectDetector {
 
       this.initialized = true;
     } catch (error) {
-      console.error('[MediaPipeObjectDetector] Initialization failed:', error);
+      log.error('Initialization failed:', error);
       throw error;
     }
   }
@@ -208,7 +220,7 @@ export class MediaPipeObjectDetector {
     const inferenceTime = performance.now() - startTime;
 
     const detections = this.convertDetections(result);
-    (detections as any).stats = this.calculateStats(detections, inferenceTime);
+    attachStats(detections, this.calculateStats(detections, inferenceTime));
 
     return detections;
   }
@@ -232,7 +244,7 @@ export class MediaPipeObjectDetector {
     const inferenceTime = performance.now() - startTime;
 
     const detections = this.convertDetections(result);
-    (detections as any).stats = this.calculateStats(detections, inferenceTime);
+    attachStats(detections, this.calculateStats(detections, inferenceTime));
 
     return detections;
   }
@@ -250,7 +262,7 @@ export class MediaPipeObjectDetector {
     const inferenceTime = performance.now() - startTime;
 
     const detections = this.convertDetections(result);
-    (detections as any).stats = this.calculateStats(detections, inferenceTime);
+    attachStats(detections, this.calculateStats(detections, inferenceTime));
 
     return detections;
   }
@@ -277,29 +289,20 @@ export class MediaPipeObjectDetector {
    * Detect objects from File
    */
   async detectFromFile(file: File): Promise<MediaPipeDetectedObject[]> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = async () => {
-        try {
-          const results = await this.detectFromImage(img);
-          resolve(results);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      img.onerror = () => reject(new Error('Failed to load image from file'));
-      img.src = URL.createObjectURL(file);
-    });
+    const img = await loadImageFromFile(file);
+    return this.detectFromImage(img);
   }
 
   /**
    * Detect objects from Blob
    */
   async detectFromBlob(blob: Blob): Promise<MediaPipeDetectedObject[]> {
-    const bitmap = await createImageBitmap(blob);
-    const results = await this.detectFromBitmap(bitmap);
-    bitmap.close();
-    return results;
+    const bitmap = await loadBitmapFromBlob(blob);
+    try {
+      return await this.detectFromBitmap(bitmap);
+    } finally {
+      bitmap.close();
+    }
   }
 
   /**

@@ -21,12 +21,19 @@
  */
 
 import * as ort from 'onnxruntime-web/all';
-import { getCachedModel, isModelCached } from '../core/modelCache';
-import type { WebNNProviderOptions } from '../types/index';
 import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
+import { loadOnnxSession } from '../core/onnxSession';
+import { applyNMS, type NmsItem } from '../core/nms';
+import { attachStats } from '../core/stats';
+import { loadBitmapFromBlob, loadImageFromFile } from '../core/sourceLoaders';
+import { letterboxToCanvas, rgbaToCHW } from '../core/preprocessing';
+import { createLogger } from '../core/logger';
+import type { WebNNProviderOptionsOrUndefined } from '../types/index';
 
 // Configure ONNX Runtime Web (only in browser environment)
 initOnnxRuntimeWeb();
+
+const log = createLogger('AnimalDetector');
 
 /**
  * 30 Animal class names supported by AnimalDetector
@@ -120,7 +127,7 @@ export interface AnimalDetectorConfig {
   /** Execution backend (default: 'wasm') */
   backend?: 'wasm' | 'webgl' | 'webgpu' | 'webnn';
   /** WebNN provider options (only used when backend is 'webnn') */
-  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  webnnOptions?: WebNNProviderOptionsOrUndefined;
   /** Device type for WebNN/WebGPU (default: 'gpu' for high performance) */
   deviceType?: 'cpu' | 'gpu' | 'npu';
   /** Power preference for WebNN/WebGPU (default: 'high-performance') */
@@ -209,7 +216,7 @@ const KEYPOINT_NAMES = [
 const DEFAULT_CONFIG: Omit<Required<Omit<AnimalDetectorConfig, 'poseModel' | 'poseModelType'>>, 'webnnOptions'> & {
   poseModel?: string;
   poseModelType: VitPoseModelType;
-  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  webnnOptions?: WebNNProviderOptionsOrUndefined;
 } = {
   detModel: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
   poseModel: undefined,  // Will be set from poseModelType
@@ -220,7 +227,7 @@ const DEFAULT_CONFIG: Omit<Required<Omit<AnimalDetectorConfig, 'poseModel' | 'po
   nmsThreshold: 0.45,
   poseConfidence: 0.3,
   backend: 'webgpu',  // Default to WebGPU for better performance
-  webnnOptions: undefined as import('../types/index').WebNNProviderOptionsOrUndefined,
+  webnnOptions: undefined as WebNNProviderOptionsOrUndefined,
   deviceType: 'gpu',
   powerPreference: 'high-performance',
   cache: true,
@@ -229,7 +236,7 @@ const DEFAULT_CONFIG: Omit<Required<Omit<AnimalDetectorConfig, 'poseModel' | 'po
 
 export class AnimalDetector {
   private config: Omit<Required<AnimalDetectorConfig>, 'webnnOptions' | 'poseModel' | 'poseModelType'> & {
-    webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+    webnnOptions?: WebNNProviderOptionsOrUndefined;
     poseModel?: string;
     poseModelType: VitPoseModelType;
   };
@@ -280,7 +287,7 @@ export class AnimalDetector {
       if (classId !== -1) {
         this.classFilter!.add(classId);
       } else {
-        console.warn(`[AnimalDetector] Unknown class: ${className}`);
+        log.warn(`Unknown class: ${className}`);
       }
     });
   }
@@ -304,7 +311,7 @@ export class AnimalDetector {
    * Get information about the current ViTPose++ model
    */
   getPoseModelInfo() {
-    const modelType = (this.config as any).poseModelType as VitPoseModelType;
+    const modelType = this.config.poseModelType;
     if (modelType && VITPOSE_MODELS[modelType]) {
       return VITPOSE_MODELS[modelType];
     }
@@ -318,105 +325,24 @@ export class AnimalDetector {
     if (this.initialized) return;
 
     try {
-      // Load detection model
-      console.log(`[AnimalDetector] Loading detection model from: ${this.config.detModel}`);
-      let detBuffer: ArrayBuffer;
-
-      if (this.config.cache) {
-        const detCached = await isModelCached(this.config.detModel);
-        console.log(`[AnimalDetector] Det model cache ${detCached ? 'hit' : 'miss'}`);
-        detBuffer = await getCachedModel(this.config.detModel);
-      } else {
-        const detResponse = await fetch(this.config.detModel);
-        if (!detResponse.ok) {
-          throw new Error(`Failed to fetch det model: HTTP ${detResponse.status}`);
-        }
-        detBuffer = await detResponse.arrayBuffer();
-      }
-
-      // Build execution providers with WebNN options
-      const detExecProviders: any[] = [];
-      
-      if (this.config.backend === 'webnn') {
-        const webnnOptions = {
-          name: 'webnn' as const,
-          deviceType: this.config.deviceType || 'gpu',
-          powerPreference: this.config.powerPreference || 'high-performance',
-        };
-        detExecProviders.push(webnnOptions);
-        console.log(`[AnimalDetector] ✅ Detection model using WebNN: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
-      } else if (this.config.backend === 'webgpu') {
-        // Check if WebGPU is available
-        if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
-          detExecProviders.push('webgpu');
-          console.log(`[AnimalDetector] ✅ Detection model using WebGPU`);
-        } else {
-          console.warn(`[AnimalDetector] ⚠️ WebGPU not available, falling back to WebGL`);
-          detExecProviders.push('webgl');
-        }
-      } else {
-        detExecProviders.push(this.config.backend);
-        console.log(`[AnimalDetector] ✅ Detection model using backend: ${this.config.backend}`);
-      }
-
-      console.log(`[AnimalDetector] Detection execution providers: ${JSON.stringify(detExecProviders)}`);
-
-      this.detSession = await ort.InferenceSession.create(detBuffer, {
-        executionProviders: detExecProviders,
-        graphOptimizationLevel: 'all',
+      this.detSession = await loadOnnxSession({
+        url: this.config.detModel,
+        backend: this.config.backend,
+        cache: this.config.cache,
+        deviceType: this.config.deviceType,
+        powerPreference: this.config.powerPreference,
+        logPrefix: '[AnimalDetector] Detection',
       });
-      console.log(`[AnimalDetector] ✅ Detection session created successfully`);
-      console.log(`[AnimalDetector] Detection model loaded, size: ${(detBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
-      // Load pose model
       const poseModelPath = this.config.poseModel!;
-      console.log(`[AnimalDetector] Loading pose model from: ${poseModelPath}`);
-      let poseBuffer: ArrayBuffer;
-
-      if (this.config.cache) {
-        const poseCached = await isModelCached(poseModelPath);
-        console.log(`[AnimalDetector] Pose model cache ${poseCached ? 'hit' : 'miss'}`);
-        poseBuffer = await getCachedModel(poseModelPath);
-      } else {
-        const poseResponse = await fetch(poseModelPath);
-        if (!poseResponse.ok) {
-          throw new Error(`Failed to fetch pose model: HTTP ${poseResponse.status}`);
-        }
-        poseBuffer = await poseResponse.arrayBuffer();
-      }
-
-      const poseExecProviders: any[] = [];
-      
-      if (this.config.backend === 'webnn') {
-        const webnnOptions = {
-          name: 'webnn' as const,
-          deviceType: this.config.deviceType || 'gpu',
-          powerPreference: this.config.powerPreference || 'high-performance',
-        };
-        poseExecProviders.push(webnnOptions);
-        console.log(`[AnimalDetector] ✅ Pose model using WebNN: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
-      } else if (this.config.backend === 'webgpu') {
-        // Check if WebGPU is available
-        if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
-          poseExecProviders.push('webgpu');
-          console.log(`[AnimalDetector] ✅ Pose model using WebGPU`);
-        } else {
-          console.warn(`[AnimalDetector] ⚠️ WebGPU not available, falling back to WebGL`);
-          poseExecProviders.push('webgl');
-        }
-      } else {
-        poseExecProviders.push(this.config.backend);
-        console.log(`[AnimalDetector] ✅ Pose model using backend: ${this.config.backend}`);
-      }
-
-      console.log(`[AnimalDetector] Pose execution providers: ${JSON.stringify(poseExecProviders)}`);
-
-      this.poseSession = await ort.InferenceSession.create(poseBuffer, {
-        executionProviders: poseExecProviders,
-        graphOptimizationLevel: 'all',
+      this.poseSession = await loadOnnxSession({
+        url: poseModelPath,
+        backend: this.config.backend,
+        cache: this.config.cache,
+        deviceType: this.config.deviceType,
+        powerPreference: this.config.powerPreference,
+        logPrefix: '[AnimalDetector] Pose',
       });
-      console.log(`[AnimalDetector] ✅ Pose session created successfully`);
-      console.log(`[AnimalDetector] Pose model loaded, size: ${(poseBuffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
 
       // Pre-allocate resources
       const [detW, detH] = this.config.detInputSize;
@@ -447,9 +373,9 @@ export class AnimalDetector {
       this.poseTensorBuffer = new Float32Array(3 * poseW * poseH);
 
       this.initialized = true;
-      console.log(`[AnimalDetector] ✅ Initialized (det:${detW}x${detH}, pose:${poseW}x${poseH})`);
+      log.log(`✅ Initialized (det:${detW}x${detH}, pose:${poseW}x${poseH})`);
     } catch (error) {
-      console.error('[AnimalDetector] ❌ Initialization failed:', error);
+      log.error('❌ Initialization failed:', error);
       throw error;
     }
   }
@@ -548,19 +474,8 @@ export class AnimalDetector {
     file: File,
     targetCanvas?: HTMLCanvasElement
   ): Promise<DetectedAnimal[]> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = async () => {
-        try {
-          const results = await this.detectFromImage(img, targetCanvas);
-          resolve(results);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      img.onerror = () => reject(new Error('Failed to load image from file'));
-      img.src = URL.createObjectURL(file);
-    });
+    const img = await loadImageFromFile(file);
+    return this.detectFromImage(img, targetCanvas);
   }
 
   /**
@@ -570,10 +485,12 @@ export class AnimalDetector {
     blob: Blob,
     targetCanvas?: HTMLCanvasElement
   ): Promise<DetectedAnimal[]> {
-    const bitmap = await createImageBitmap(blob);
-    const results = await this.detectFromBitmap(bitmap, targetCanvas);
-    bitmap.close();
-    return results;
+    const bitmap = await loadBitmapFromBlob(blob);
+    try {
+      return await this.detectFromBitmap(bitmap, targetCanvas);
+    } finally {
+      bitmap.close();
+    }
   }
 
   /**
@@ -620,13 +537,13 @@ export class AnimalDetector {
     });
 
     // Attach stats
-    (animals as any).stats = {
+    attachStats(animals, {
       animalCount: animals.length,
       classCounts,
       detTime: Math.round(detTime),
       poseTime: Math.round(poseTime),
       totalTime: Math.round(totalTime),
-    } as AnimalDetectionStats;
+    } satisfies AnimalDetectionStats);
 
     return animals;
   }
@@ -726,52 +643,20 @@ export class AnimalDetector {
       this.ctx = this.canvas.getContext('2d', { willReadFrequently: true, alpha: false })!;
     }
 
-    const ctx = this.ctx;
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, inputW, inputH);
+    const meta = letterboxToCanvas(
+      imageData,
+      imgWidth,
+      imgHeight,
+      inputW,
+      inputH,
+      this.ctx,
+    );
 
-    const aspectRatio = imgWidth / imgHeight;
-    const targetAspectRatio = inputW / inputH;
-
-    let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number;
-
-    if (aspectRatio > targetAspectRatio) {
-      drawWidth = inputW;
-      drawHeight = Math.floor(inputW / aspectRatio);
-      offsetX = 0;
-      offsetY = Math.floor((inputH - drawHeight) / 2);
-    } else {
-      drawHeight = inputH;
-      drawWidth = Math.floor(inputH * aspectRatio);
-      offsetX = Math.floor((inputW - drawWidth) / 2);
-      offsetY = 0;
-    }
-
-    const srcCanvas = document.createElement('canvas');
-    const srcCtx = srcCanvas.getContext('2d')!;
-    srcCanvas.width = imgWidth;
-    srcCanvas.height = imgHeight;
-
-    const srcImageData = srcCtx.createImageData(imgWidth, imgHeight);
-    srcImageData.data.set(imageData);
-    srcCtx.putImageData(srcImageData, 0, 0);
-
-    ctx.drawImage(srcCanvas, 0, 0, imgWidth, imgHeight, offsetX, offsetY, drawWidth, drawHeight);
-
-    const paddedData = ctx.getImageData(0, 0, inputW, inputH);
+    const paddedData = this.ctx.getImageData(0, 0, inputW, inputH);
     const tensor = new Float32Array(inputW * inputH * 3);
+    rgbaToCHW(paddedData.data, inputW, inputH, tensor);
 
-    for (let i = 0; i < paddedData.data.length; i += 4) {
-      const pixelIdx = i / 4;
-      tensor[pixelIdx] = paddedData.data[i] / 255;
-      tensor[pixelIdx + inputW * inputH] = paddedData.data[i + 1] / 255;
-      tensor[pixelIdx + 2 * inputW * inputH] = paddedData.data[i + 2] / 255;
-    }
-
-    const scaleX = imgWidth / drawWidth;
-    const scaleY = imgHeight / drawHeight;
-
-    return { tensor, paddingX: offsetX, paddingY: offsetY, scaleX, scaleY };
+    return { tensor, ...meta };
   }
 
   private postprocessYOLO(
@@ -788,11 +673,13 @@ export class AnimalDetector {
     classId: number;
     className: string;
   }> {
-    const detections: Array<{
+    interface RawDet {
       bbox: { x1: number; y1: number; x2: number; y2: number; confidence: number };
       classId: number;
       className: string;
-    }> = [];
+    }
+
+    const entries: NmsItem[] = [];
 
     for (let i = 0; i < numDetections; i++) {
       const idx = i * 6;
@@ -811,7 +698,7 @@ export class AnimalDetector {
       const tx2 = (x2 - paddingX) * scaleX;
       const ty2 = (y2 - paddingY) * scaleY;
 
-      detections.push({
+      const det: RawDet = {
         bbox: {
           x1: Math.max(0, tx1),
           y1: Math.max(0, ty1),
@@ -821,10 +708,16 @@ export class AnimalDetector {
         },
         classId,
         className: ANIMAL_CLASSES[classId] || `animal_${classId}`,
-      });
+      };
+      entries.push({
+        bbox: { x1: det.bbox.x1, y1: det.bbox.y1, x2: det.bbox.x2, y2: det.bbox.y2 },
+        score: confidence,
+        det,
+      } as unknown as NmsItem);
     }
 
-    return this.applyNMS(detections, this.config.nmsThreshold);
+    const kept = applyNMS(entries, this.config.nmsThreshold);
+    return kept.map((k) => (k as unknown as { det: RawDet }).det);
   }
 
   private preprocessPose(
@@ -922,90 +815,54 @@ export class AnimalDetector {
     const numKeypoints = shapeX[1];
     const wx = shapeX[2];
     const wy = shapeY[2];
+    const invWx = 1 / wx;
+    const invWy = 1 / wy;
+    const halfScale0 = scale[0] * 0.5;
+    const halfScale1 = scale[1] * 0.5;
 
-    const keypoints: AnimalKeypoint[] = [];
+    const keypoints: AnimalKeypoint[] = new Array(numKeypoints);
 
     for (let k = 0; k < numKeypoints; k++) {
-      let maxX = -Infinity, argmaxX = 0;
-      for (let i = 0; i < wx; i++) {
-        const val = simccX[k * wx + i];
-        if (val > maxX) { maxX = val; argmaxX = i; }
+      // Argmax X — start from index 1, use baseX[0] as initial argmax.
+      const baseX = k * wx;
+      let maxX = simccX[baseX];
+      let argmaxX = 0;
+      for (let i = 1; i < wx; i++) {
+        const val = simccX[baseX + i];
+        if (val > maxX) {
+          maxX = val;
+          argmaxX = i;
+        }
       }
 
-      let maxY = -Infinity, argmaxY = 0;
-      for (let i = 0; i < wy; i++) {
-        const val = simccY[k * wy + i];
-        if (val > maxY) { maxY = val; argmaxY = i; }
+      // Argmax Y
+      const baseY = k * wy;
+      let maxY = simccY[baseY];
+      let argmaxY = 0;
+      for (let i = 1; i < wy; i++) {
+        const val = simccY[baseY + i];
+        if (val > maxY) {
+          maxY = val;
+          argmaxY = i;
+        }
       }
 
       const score = 0.5 * (maxX + maxY);
       const visible = score > this.config.poseConfidence;
 
-      const normX = argmaxX / wx;
-      const normY = argmaxY / wy;
+      const x = argmaxX * invWx * scale[0] - halfScale0 + center[0];
+      const y = argmaxY * invWy * scale[1] - halfScale1 + center[1];
 
-      const x = (normX - 0.5) * scale[0] + center[0];
-      const y = (normY - 0.5) * scale[1] + center[1];
-
-      keypoints.push({
+      keypoints[k] = {
         x,
         y,
         score,
         visible,
         name: KEYPOINT_NAMES[k] || `keypoint_${k}`,
-      });
+      };
     }
 
     return keypoints;
-  }
-
-  private applyNMS<T extends { bbox: { x1: number; y1: number; x2: number; y2: number; confidence: number } }>(
-    detections: T[],
-    iouThreshold: number
-  ): T[] {
-    if (detections.length === 0) return [];
-
-    detections.sort((a, b) => b.bbox.confidence - a.bbox.confidence);
-
-    const selected: T[] = [];
-    const used = new Set<number>();
-
-    for (let i = 0; i < detections.length; i++) {
-      if (used.has(i)) continue;
-
-      selected.push(detections[i]);
-      used.add(i);
-
-      for (let j = i + 1; j < detections.length; j++) {
-        if (used.has(j)) continue;
-
-        const iou = this.calculateIoU(detections[i].bbox, detections[j].bbox);
-        if (iou > iouThreshold) {
-          used.add(j);
-        }
-      }
-    }
-
-    return selected;
-  }
-
-  private calculateIoU(
-    box1: { x1: number; y1: number; x2: number; y2: number },
-    box2: { x1: number; y1: number; x2: number; y2: number }
-  ): number {
-    const x1 = Math.max(box1.x1, box2.x1);
-    const y1 = Math.max(box1.y1, box2.y1);
-    const x2 = Math.min(box1.x2, box2.x2);
-    const y2 = Math.min(box1.y2, box2.y2);
-
-    if (x2 <= x1 || y2 <= y1) return 0;
-
-    const intersection = (x2 - x1) * (y2 - y1);
-    const area1 = (box1.x2 - box1.x1) * (box1.y2 - box1.y1);
-    const area2 = (box2.x2 - box2.x1) * (box2.y2 - box2.y1);
-    const union = area1 + area2 - intersection;
-
-    return intersection / union;
   }
 
   /**

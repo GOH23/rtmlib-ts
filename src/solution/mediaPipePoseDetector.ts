@@ -25,6 +25,11 @@
  */
 
 import { FilesetResolver, PoseLandmarker as MediaPipePoseLandmarker } from '@mediapipe/tasks-vision';
+import { createLogger } from '../core/logger';
+import { loadBitmapFromBlob, loadImageFromFile } from '../core/sourceLoaders';
+import { attachStats } from '../core/stats';
+
+const log = createLogger('MediaPipePoseDetector');
 
 /**
  * Single landmark with 3D coordinates
@@ -181,7 +186,7 @@ export class MediaPipePoseDetector {
     if (this.initialized) return;
 
     try {
-      console.log('[MediaPipePoseDetector] Initializing...');
+      log.log('Initializing...');
 
       // Initialize FilesetResolver for Vision Tasks
       this.vision = await FilesetResolver.forVisionTasks(
@@ -202,9 +207,9 @@ export class MediaPipePoseDetector {
       });
 
       this.initialized = true;
-      console.log('[MediaPipePoseDetector] ✅ Initialized');
+      log.log('✅ Initialized');
     } catch (error) {
-      console.error('[MediaPipePoseDetector] ❌ Initialization failed:', error);
+      log.error('❌ Initialization failed:', error);
       throw error;
     }
   }
@@ -222,10 +227,10 @@ export class MediaPipePoseDetector {
     const inferenceTime = performance.now() - startTime;
 
     const poses = this.convertPoses(result, canvas.width, canvas.height);
-    (poses as any).stats = {
+    attachStats(poses, {
       poseCount: poses.length,
       inferenceTime: Math.round(inferenceTime),
-    } as MediaPipePoseStats;
+    } satisfies MediaPipePoseStats);
 
     return poses;
   }
@@ -249,10 +254,10 @@ export class MediaPipePoseDetector {
     const inferenceTime = performance.now() - startTime;
 
     const poses = this.convertPoses(result, video.videoWidth, video.videoHeight);
-    (poses as any).stats = {
+    attachStats(poses, {
       poseCount: poses.length,
       inferenceTime: Math.round(inferenceTime),
-    } as MediaPipePoseStats;
+    } satisfies MediaPipePoseStats);
 
     return poses;
   }
@@ -270,10 +275,10 @@ export class MediaPipePoseDetector {
     const inferenceTime = performance.now() - startTime;
 
     const poses = this.convertPoses(result, image.naturalWidth, image.naturalHeight);
-    (poses as any).stats = {
+    attachStats(poses, {
       poseCount: poses.length,
       inferenceTime: Math.round(inferenceTime),
-    } as MediaPipePoseStats;
+    } satisfies MediaPipePoseStats);
 
     return poses;
   }
@@ -300,29 +305,20 @@ export class MediaPipePoseDetector {
    * Detect poses from File
    */
   async detectFromFile(file: File): Promise<MediaPipePose[]> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = async () => {
-        try {
-          const results = await this.detectFromImage(img);
-          resolve(results);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      img.onerror = () => reject(new Error('Failed to load image from file'));
-      img.src = URL.createObjectURL(file);
-    });
+    const img = await loadImageFromFile(file);
+    return this.detectFromImage(img);
   }
 
   /**
    * Detect poses from Blob
    */
   async detectFromBlob(blob: Blob): Promise<MediaPipePose[]> {
-    const bitmap = await createImageBitmap(blob);
-    const results = await this.detectFromBitmap(bitmap);
-    bitmap.close();
-    return results;
+    const bitmap = await loadBitmapFromBlob(blob);
+    try {
+      return await this.detectFromBitmap(bitmap);
+    } finally {
+      bitmap.close();
+    }
   }
 
   /**

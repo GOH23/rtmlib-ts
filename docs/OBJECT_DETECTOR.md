@@ -4,7 +4,7 @@ Universal multi-class object detection API supporting all 80 COCO classes.
 
 ## Overview
 
-`ObjectDetector` provides a simple, unified interface for detecting objects in images, videos, and live camera feeds. Supports **YOLO12** and **MediaPipe EfficientDet**.
+`ObjectDetector` provides a simple, unified interface for detecting objects in images, videos, and live camera feeds. Supports **YOLO** (any of `yolov8n` / `yolov12n` / `yolo26n`) and **MediaPipe EfficientDet**.
 
 **Model is loaded automatically from HuggingFace if not specified.**
 
@@ -24,7 +24,7 @@ const detector = new ObjectDetector({
 await detector.init();
 ```
 
-See [MediaPipe Detector API](MEDIAPIPE_DETECTOR.md) for more details.
+See [MediaPipe Detector API](https://developers.google.com/mediapipe) for more details.
 
 ## Installation
 
@@ -121,7 +121,8 @@ new ObjectDetector(config?: ObjectDetectorConfig)
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `detectorType` | `'yolo' \| 'mediapipe'` | `'yolo'` | Detector backend type |
-| `model` | `string` | optional | Path to YOLO model (for YOLO type) |
+| `model` | `string` | optional | Path to YOLO model (raw URL — wins over `yoloVersion`). For YOLO type only. |
+| `yoloVersion` | `'yolov8n' \| 'yolov12n' \| 'yolo26n'` | `'yolov12n'` | YOLO version shortcut. Resolves to a URL via `YOLO_VERSIONS`. Ignored when `model` is set. |
 | `mediaPipeModelPath` | `string` | optional | Path to MediaPipe TFLite model |
 | `mediaPipeScoreThreshold` | `number` | `0.5` | MediaPipe confidence threshold |
 | `mediaPipeMaxResults` | `number` | `-1` | MediaPipe max detections (-1 for all) |
@@ -137,7 +138,26 @@ new ObjectDetector(config?: ObjectDetectorConfig)
 
 If `model` is not specified, the following default model is used:
 
-- **Model**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx`
+- **YOLO**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx` (via `YOLO_VERSIONS.yolov12n`)
+
+Three YOLO versions are bundled:
+
+```typescript
+import { ObjectDetector, YOLO_VERSIONS, type YoloVersion } from 'rtmlib-ts';
+
+// Pick by name — URL is resolved from the central YOLO_VERSIONS registry
+const det = new ObjectDetector({ yoloVersion: 'yolo26n' });    // yolov8n | yolov12n | yolo26n
+
+// Or pass a raw URL directly (always wins over yoloVersion)
+const det2 = new ObjectDetector({
+  model: 'https://my-mirror.example/yolov8n.onnx',
+});
+```
+
+`yolov8n` and `yolov12n` use the original Ultralytics output layout
+(`[1, num_boxes, 4+class_count]`). `yolo26n` uses the newer output head
+(`[1, num_boxes, 80+4]` — class scores first, box coords last) and is
+auto-detected at runtime.
 
 ### Methods
 

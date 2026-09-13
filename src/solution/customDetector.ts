@@ -23,12 +23,17 @@
  */
 
 import * as ort from 'onnxruntime-web/all';
-import { getCachedModel, isModelCached } from '../core/modelCache';
-import type { WebNNProviderOptions } from '../types/index';
 import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
+import { loadOnnxSession } from '../core/onnxSession';
+import { createLogger } from '../core/logger';
+import { loadBitmapFromBlob, loadImageFromFile } from '../core/sourceLoaders';
+import { letterboxGeometry, fillLetterbox, rgbaToCHW } from '../core/preprocessing';
+import type { WebNNProviderOptions } from '../types/index';
 
 // Configure ONNX Runtime Web (only in browser environment)
 initOnnxRuntimeWeb();
+
+const log = createLogger('CustomDetector');
 
 /**
  * Configuration options for CustomDetector
@@ -123,52 +128,29 @@ export class CustomDetector {
     if (this.initialized) return;
 
     try {
-      console.log(`[CustomDetector] Loading model from: ${this.config.model}`);
-      let modelBuffer: ArrayBuffer;
-
-      if (this.config.cache) {
-        const cached = await isModelCached(this.config.model);
-        console.log(`[CustomDetector] Cache ${cached ? 'hit' : 'miss'}`);
-        modelBuffer = await getCachedModel(this.config.model);
-      } else {
-        const response = await fetch(this.config.model);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch model: HTTP ${response.status}`);
-        }
-        modelBuffer = await response.arrayBuffer();
-      }
-
-      // Build execution providers with WebNN options
-      const execProviders: any[] = [];
-      if (this.config.backend === 'webnn') {
-        execProviders.push({
-          name: 'webnn',
-          deviceType: this.config.deviceType || 'gpu',
-          powerPreference: this.config.powerPreference || 'high-performance',
-        });
-      } else {
-        execProviders.push(this.config.backend);
-      }
-
-      this.session = await ort.InferenceSession.create(modelBuffer, {
-        executionProviders: execProviders,
-        graphOptimizationLevel: 'all',
+      this.session = await loadOnnxSession({
+        url: this.config.model,
+        backend: this.config.backend,
+        cache: this.config.cache,
+        deviceType: this.config.deviceType,
+        powerPreference: this.config.powerPreference,
+        logPrefix: '[CustomDetector]',
       });
 
       // Auto-detect input/output names if not specified
       if (!this.config.inputName && this.session.inputNames.length > 0) {
-        console.log(`[CustomDetector] Auto-detected input name: ${this.session.inputNames[0]}`);
+        log.log(`Auto-detected input name: ${this.session.inputNames[0]}`);
       }
 
       if (this.config.outputNames.length === 0 && this.session.outputNames.length > 0) {
         this.config.outputNames = [...this.session.outputNames];
-        console.log(`[CustomDetector] Auto-detected output names: ${this.config.outputNames}`);
+        log.log(`Auto-detected output names: ${this.config.outputNames}`);
       }
 
-      console.log(`[CustomDetector] ✅ Initialized (${this.config.backend})`);
+      log.log(`✅ Initialized (${this.config.backend})`);
       this.initialized = true;
     } catch (error) {
-      console.error('[CustomDetector] ❌ Initialization failed:', error);
+      log.error('❌ Initialization failed:', error);
       throw error;
     }
   }
@@ -267,19 +249,8 @@ export class CustomDetector {
     file: File,
     targetCanvas?: HTMLCanvasElement
   ): Promise<DetectionResult<T>> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = async () => {
-        try {
-          const result = await this.runFromImage<T>(img, targetCanvas);
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = URL.createObjectURL(file);
-    });
+    const img = await loadImageFromFile(file);
+    return this.runFromImage<T>(img, targetCanvas);
   }
 
   /**
@@ -289,10 +260,12 @@ export class CustomDetector {
     blob: Blob,
     targetCanvas?: HTMLCanvasElement
   ): Promise<DetectionResult<T>> {
-    const bitmap = await createImageBitmap(blob);
-    const result = await this.runFromBitmap<T>(bitmap, targetCanvas);
-    bitmap.close();
-    return result;
+    const bitmap = await loadBitmapFromBlob(blob);
+    try {
+      return await this.runFromBitmap<T>(bitmap, targetCanvas);
+    } finally {
+      bitmap.close();
+    }
   }
 
   /**
@@ -408,7 +381,12 @@ export class CustomDetector {
   }
 
   /**
-   * Preprocess with letterbox and normalization
+   * Preprocess with letterbox and normalization.
+   *
+   * `keepAspectRatio` (default true) preserves the source aspect ratio
+   * and pads with `backgroundColor`; the browser-resampled drawImage
+   * path is significantly faster than a manual pixel loop and is
+   * faithful to the previous implementation.
    */
   private preprocess(
     imageData: ImageData,
@@ -426,54 +404,38 @@ export class CustomDetector {
     }
 
     const ctx = this.ctx;
-    ctx.fillStyle = this.config.backgroundColor;
-    ctx.fillRect(0, 0, inputW, inputH);
 
-    // Calculate letterbox
-    const aspectRatio = imgWidth / imgHeight;
-    const targetAspectRatio = inputW / inputH;
-
-    let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number;
-
-    if (this.config.keepAspectRatio) {
-      if (aspectRatio > targetAspectRatio) {
-        drawWidth = inputW;
-        drawHeight = Math.floor(inputW / aspectRatio);
-        offsetX = 0;
-        offsetY = Math.floor((inputH - drawHeight) / 2);
-      } else {
-        drawHeight = inputH;
-        drawWidth = Math.floor(inputH * aspectRatio);
-        offsetX = Math.floor((inputW - drawWidth) / 2);
-        offsetY = 0;
-      }
-    } else {
-      drawWidth = inputW;
-      drawHeight = inputH;
-      offsetX = 0;
-      offsetY = 0;
-    }
-
-    // Create source canvas
+    // Stage source RGBA on a scratch canvas so we can use drawImage.
     const srcCanvas = document.createElement('canvas');
     const srcCtx = srcCanvas.getContext('2d')!;
     srcCanvas.width = imgWidth;
     srcCanvas.height = imgHeight;
-
     srcCtx.putImageData(imageData, 0, 0);
 
-    // Draw with letterbox
-    ctx.drawImage(srcCanvas, 0, 0, imgWidth, imgHeight, offsetX, offsetY, drawWidth, drawHeight);
+    if (this.config.keepAspectRatio) {
+      const geom = letterboxGeometry(imgWidth, imgHeight, inputW, inputH);
+      fillLetterbox(ctx, inputW, inputH, this.config.backgroundColor);
+      ctx.drawImage(srcCanvas, 0, 0, imgWidth, imgHeight, geom.offX, geom.offY, geom.drawW, geom.drawH);
+    } else {
+      ctx.drawImage(srcCanvas, 0, 0, imgWidth, imgHeight, 0, 0, inputW, inputH);
+    }
 
     const paddedData = ctx.getImageData(0, 0, inputW, inputH);
     const tensor = new Float32Array(inputW * inputH * 3);
-    const { mean, std } = this.config.normalization;
+    rgbaToCHW(paddedData.data, inputW, inputH, tensor);
 
-    for (let i = 0; i < paddedData.data.length; i += 4) {
-      const pixelIdx = i / 4;
-      tensor[pixelIdx] = (paddedData.data[i] - mean[0]) / std[0];
-      tensor[pixelIdx + inputW * inputH] = (paddedData.data[i + 1] - mean[1]) / std[1];
-      tensor[pixelIdx + 2 * inputW * inputH] = (paddedData.data[i + 2] - mean[2]) / std[2];
+    // Apply user-supplied normalization on top of the [0, 1] baseline.
+    const { mean, std } = this.config.normalization;
+    if (mean[0] !== 0 || mean[1] !== 0 || mean[2] !== 0 ||
+        std[0] !== 1 || std[1] !== 1 || std[2] !== 1) {
+      const plane = inputW * inputH;
+      const inv0 = 1 / std[0], inv1 = 1 / std[1], inv2 = 1 / std[2];
+      const meanScaled0 = mean[0] / 255, meanScaled1 = mean[1] / 255, meanScaled2 = mean[2] / 255;
+      for (let i = 0; i < plane; i++) {
+        tensor[i] = (tensor[i] - meanScaled0) * inv0;
+        tensor[i + plane] = (tensor[i + plane] - meanScaled1) * inv1;
+        tensor[i + 2 * plane] = (tensor[i + 2 * plane] - meanScaled2) * inv2;
+      }
     }
 
     return new ort.Tensor('float32', tensor, [1, 3, inputH, inputW]);

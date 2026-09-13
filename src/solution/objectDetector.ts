@@ -1,38 +1,45 @@
 /**
  * ObjectDetector - Universal object detection API
- * Supports YOLO12 and other YOLO models for multi-class detection
+ * Supports YOLO (Ultralytics ONNX export) and MediaPipe Tasks Vision
+ * (EfficientDet-Lite0) for multi-class detection. The default backend is
+ * `'yolo'` (YOLO12n on HuggingFace). Override with `detectorType:
+ * 'mediapipe'` to switch backends.
  *
  * @example
  * ```typescript
- * // Initialize with default model (YOLOv12n from HuggingFace)
+ * // Default — YOLO12n on HuggingFace, person-only
  * const detector = new ObjectDetector({
- *   classes: ['person', 'car', 'dog'],  // Filter specific classes
+ *   classes: ['person'],
  * });
  * await detector.init();
  *
- * // Or with custom model
+ * // Or with MediaPipe EfficientDet-Lite0
  * const detector = new ObjectDetector({
- *   model: 'models/yolov12n.onnx',
+ *   detectorType: 'mediapipe',
  *   classes: ['person'],
  * });
  * await detector.init();
  *
  * // Detect from canvas
  * const objects = await detector.detectFromCanvas(canvas);
- *
- * // Detect all classes
- * const allObjects = await detector.detectFromCanvas(canvas, { classes: null });
  * ```
  */
 
 import * as ort from 'onnxruntime-web/all';
-import { getCachedModel, isModelCached } from '../core/modelCache';
 import { MediaPipeObjectDetector, MediaPipeDetectedObject } from './mediaPipeObjectDetector';
-import type { WebNNProviderOptions } from '../types/index';
 import { initOnnxRuntimeWeb } from '../core/onnxRuntime';
+import { resolveYoloModelUrl, type YoloVersion } from '../models/yoloModels';
+import { attachStats } from '../core/stats';
+import { loadBitmapFromBlob, loadImageFromFile } from '../core/sourceLoaders';
+import { letterboxToCanvas } from '../core/preprocessing';
+import { loadOnnxSession } from '../core/onnxSession';
+import { createLogger } from '../core/logger';
+import type { WebNNProviderOptionsOrUndefined } from '../types/index';
 
 // Configure ONNX Runtime Web (only in browser environment)
 initOnnxRuntimeWeb();
+
+const log = createLogger('ObjectDetector');
 
 /**
  * COCO 80-class names
@@ -61,6 +68,11 @@ export type ObjectDetectorBackend = 'yolo' | 'mediapipe';
 export interface ObjectDetectorConfig {
   /** Path to YOLO detection model (optional - uses default YOLOv12n from HuggingFace if not specified) */
   model?: string;
+  /** YOLO version shortcut. If `model` is also given, the URL wins; if
+   * `model` is omitted, this resolves to a default ONNX URL via
+   * `YOLO_VERSIONS[version]`. Supports `'yolov8n'`, `'yolov12n'`,
+   * `'yolo26n'`. Default `'yolov12n'`. */
+  yoloVersion?: YoloVersion;
   /** Input size (default: [416, 416] for speed) */
   inputSize?: [number, number];
   /** Confidence threshold (default: 0.5) */
@@ -72,7 +84,7 @@ export interface ObjectDetectorConfig {
   /** Execution backend (default: 'webgl' for best compatibility) */
   backend?: 'wasm' | 'webgl' | 'webgpu' | 'webnn';
   /** WebNN provider options (only used when backend is 'webnn') */
-  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  webnnOptions?: WebNNProviderOptionsOrUndefined;
   /** Device type for WebNN/WebGPU (default: 'gpu' for high performance) */
   deviceType?: 'cpu' | 'gpu' | 'npu';
   /** Power preference for WebNN/WebGPU (default: 'high-performance') */
@@ -129,15 +141,16 @@ export interface DetectionStats {
  * Default configuration
  */
 const DEFAULT_CONFIG: Omit<Required<ObjectDetectorConfig>, 'webnnOptions'> & {
-  webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+  webnnOptions?: WebNNProviderOptionsOrUndefined;
 } = {
   model: 'https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx',
+  yoloVersion: 'yolov12n',
   inputSize: [416, 416],  // Faster default
   confidence: 0.5,
   nmsThreshold: 0.45,
   classes: ['person'],
   backend: 'webgl',  // Default to WebGL for best compatibility
-  webnnOptions: undefined as import('../types/index').WebNNProviderOptionsOrUndefined,
+  webnnOptions: undefined as WebNNProviderOptionsOrUndefined,
   deviceType: 'gpu',
   powerPreference: 'high-performance',
   mode: 'balanced',
@@ -159,7 +172,7 @@ const MODE_PRESETS: Record<string, { inputSize: [number, number]; confidence: nu
 
 export class ObjectDetector {
   private config: Omit<Required<ObjectDetectorConfig>, 'webnnOptions'> & {
-    webnnOptions?: import('../types/index').WebNNProviderOptionsOrUndefined;
+    webnnOptions?: WebNNProviderOptionsOrUndefined;
   };
   private session: ort.InferenceSession | null = null;
   private mediaPipeDetector: MediaPipeObjectDetector | null = null;
@@ -176,6 +189,12 @@ export class ObjectDetector {
     // Apply mode preset if specified
     let finalConfig = { ...DEFAULT_CONFIG, ...config };
 
+    // If the caller specified `yoloVersion` but not `model`, resolve to the
+    // version's default URL. `model` (raw URL) always wins over `yoloVersion`.
+    if (!config.model && config.yoloVersion) {
+      finalConfig.model = resolveYoloModelUrl(config.yoloVersion);
+    }
+
     // Apply mode preset if specified
     if (config.mode && MODE_PRESETS[config.mode]) {
       const preset = MODE_PRESETS[config.mode];
@@ -187,7 +206,7 @@ export class ObjectDetector {
     this.config = finalConfig;
     this.updateClassFilter();
 
-    console.log(`[ObjectDetector] Initialized with mode: ${config.mode || 'balanced'}, input: ${this.config.inputSize[0]}x${this.config.inputSize[1]}, detectorType: ${this.config.detectorType}`);
+    log.log(`Initialized with mode: ${config.mode || 'balanced'}, input: ${this.config.inputSize[0]}x${this.config.inputSize[1]}, detectorType: ${this.config.detectorType}`);
   }
 
   /**
@@ -205,7 +224,7 @@ export class ObjectDetector {
       if (classId !== -1) {
         this.classFilter!.add(classId);
       } else {
-        console.warn(`[ObjectDetector] Unknown class: ${className}`);
+        log.warn(`Unknown class: ${className}`);
       }
     });
   }
@@ -220,7 +239,8 @@ export class ObjectDetector {
   }
 
   /**
-   * Get list of available COCO classes
+   * Get list of available classes. Both `'yolo'` and `'mediapipe'`
+   * backends use the same COCO 80-class list.
    */
   getAvailableClasses(): string[] {
     return [...COCO_CLASSES];
@@ -240,14 +260,15 @@ export class ObjectDetector {
     if (this.initialized) return;
 
     try {
-      // Initialize based on detector type
+      // Initialize based on detector type. Order matters: each branch
+      // takes full ownership of its own session / native handle.
       if (this.config.detectorType === 'mediapipe') {
         await this.initMediaPipe();
       } else {
         await this.initYOLO();
       }
     } catch (error) {
-      console.error('[ObjectDetector] ❌ Initialization failed:', error);
+      log.error('❌ Initialization failed:', error);
       throw error;
     }
   }
@@ -256,70 +277,15 @@ export class ObjectDetector {
    * Initialize YOLO model (original implementation)
    */
   private async initYOLO(): Promise<void> {
-    let modelBuffer: ArrayBuffer;
-
-    // Use cached model if caching is enabled
-    if (this.config.cache) {
-      const isCached = await isModelCached(this.config.model);
-      if (isCached) {
-        modelBuffer = await getCachedModel(this.config.model);
-      } else {
-        const response = await fetch(this.config.model);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch model: HTTP ${response.status}`);
-        }
-        modelBuffer = await response.arrayBuffer();
-      }
-    } else {
-      const response = await fetch(this.config.model);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model: HTTP ${response.status}`);
-      }
-      modelBuffer = await response.arrayBuffer();
-    }
-
-    // Build execution providers array with WebNN options
-    const execProviders: any[] = [];
-    
-    // Check if requested backend is available
-    let selectedBackend = this.config.backend;
-    
-    if (this.config.backend === 'webnn') {
-      const webnnOptions = {
-        name: 'webnn' as const,
-        deviceType: this.config.deviceType || 'gpu',
-        powerPreference: this.config.powerPreference || 'high-performance',
-      };
-      execProviders.push(webnnOptions);
-      console.log(`[ObjectDetector] ✅ Using WebNN backend: deviceType=${webnnOptions.deviceType}, powerPreference=${webnnOptions.powerPreference}`);
-    } else if (this.config.backend === 'webgpu') {
-      // Check if WebGPU is available
-      if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
-        execProviders.push('webgpu');
-        console.log(`[ObjectDetector] ✅ Using WebGPU backend`);
-      } else {
-        console.warn(`[ObjectDetector] ⚠️ WebGPU not available, falling back to WebGL`);
-        selectedBackend = 'webgl';
-        execProviders.push('webgl');
-      }
-    } else {
-      execProviders.push(this.config.backend);
-      console.log(`[ObjectDetector] ✅ Using backend: ${this.config.backend}`);
-    }
-    
-    // Always add WASM as fallback
-    execProviders.push('wasm');
-
-    console.log(`[ObjectDetector] Execution providers: ${JSON.stringify(execProviders)}`);
-    console.log(`[ObjectDetector] Selected backend: ${selectedBackend}`);
-
-    // Create session with multiple execution providers for fallback
-    this.session = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: execProviders,
-      graphOptimizationLevel: 'all',
+    this.session = await loadOnnxSession({
+      url: this.config.model,
+      backend: this.config.backend,
+      cache: this.config.cache,
+      deviceType: this.config.deviceType,
+      powerPreference: this.config.powerPreference,
+      fallbackProviders: ['wasm'],
+      logPrefix: '[ObjectDetector]',
     });
-
-    console.log(`[ObjectDetector] ✅ Session created successfully`);
 
     // Pre-allocate canvas and tensor buffer for performance
     const [w, h] = this.config.inputSize;
@@ -343,7 +309,7 @@ export class ObjectDetector {
    * Initialize MediaPipe detector
    */
   private async initMediaPipe(): Promise<void> {
-    console.log(`[ObjectDetector] Initializing MediaPipe detector from: ${this.config.mediaPipeModelPath}`);
+    log.log(`Initializing MediaPipe detector from: ${this.config.mediaPipeModelPath}`);
 
     this.mediaPipeDetector = new MediaPipeObjectDetector({
       modelPath: this.config.mediaPipeModelPath,
@@ -355,7 +321,7 @@ export class ObjectDetector {
     await this.mediaPipeDetector.init();
 
     this.initialized = true;
-    console.log('[ObjectDetector] ✅ MediaPipe Initialized');
+    log.log('✅ MediaPipe Initialized');
   }
 
   /**
@@ -503,24 +469,13 @@ export class ObjectDetector {
     // Use MediaPipe if selected
     if (this.config.detectorType === 'mediapipe' && this.mediaPipeDetector) {
       const mpDetections = await this.mediaPipeDetector.detectFromFile(file);
-      const img = await this.loadImageFromFile(file);
+      const img = await loadImageFromFile(file);
       return this.convertMediaPipeDetections(mpDetections, img.width, img.height);
     }
 
-    // Otherwise use YOLO (original implementation)
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = async () => {
-        try {
-          const results = await this.detectFromImage(img, targetCanvas);
-          resolve(results);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      img.onerror = () => reject(new Error('Failed to load image from file'));
-      img.src = URL.createObjectURL(file);
-    });
+    // YOLO goes through the same image-load → detectFromImage path.
+    const img = await loadImageFromFile(file);
+    return this.detectFromImage(img, targetCanvas);
   }
 
   /**
@@ -537,29 +492,21 @@ export class ObjectDetector {
     // Use MediaPipe if selected
     if (this.config.detectorType === 'mediapipe' && this.mediaPipeDetector) {
       const mpDetections = await this.mediaPipeDetector.detectFromBlob(blob);
-      const bitmap = await createImageBitmap(blob);
-      const results = this.convertMediaPipeDetections(mpDetections, bitmap.width, bitmap.height);
-      bitmap.close();
-      return results;
+      const bitmap = await loadBitmapFromBlob(blob);
+      try {
+        return this.convertMediaPipeDetections(mpDetections, bitmap.width, bitmap.height);
+      } finally {
+        bitmap.close();
+      }
     }
 
-    // Otherwise use YOLO
-    const bitmap = await createImageBitmap(blob);
-    const results = await this.detectFromBitmap(bitmap, targetCanvas);
-    bitmap.close();
-    return results;
-  }
-
-  /**
-   * Helper to load image from file
-   */
-  private loadImageFromFile(file: File): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = URL.createObjectURL(file);
-    });
+    // YOLO goes through the same bitmap pipeline.
+    const bitmap = await loadBitmapFromBlob(blob);
+    try {
+      return await this.detectFromBitmap(bitmap, targetCanvas);
+    } finally {
+      bitmap.close();
+    }
   }
 
   /**
@@ -614,18 +561,12 @@ export class ObjectDetector {
     // Inference - use dynamic input name
     const inputTensor = new ort.Tensor('float32', tensor, [1, 3, inputH, inputW]);
     const inputName = this.session!.inputNames[0];  // Dynamic: 'images' or 'pixel_values'
-    
-    console.log(`[ObjectDetector] Using input name: ${inputName}`);
-    console.log(`[ObjectDetector] Input shape: [1, 3, ${inputH}, ${inputW}]`);
-    
+
     const feeds: Record<string, ort.Tensor> = {};
     feeds[inputName] = inputTensor;
-    
+
     const results = await this.session!.run(feeds);
     const output = results[this.session!.outputNames[0]];
-    
-    console.log(`[ObjectDetector] Output shape: [${output.dims}]`);
-    console.log(`[ObjectDetector] Output type: ${output.type}`);
 
     // Postprocess
     const detections = this.postprocess(
@@ -643,7 +584,7 @@ export class ObjectDetector {
     const inferenceTime = performance.now() - startTime;
 
     // Attach stats
-    (detections as any).stats = this.calculateStats(detections, inferenceTime);
+    attachStats(detections, this.calculateStats(detections, inferenceTime));
 
     return detections;
   }
@@ -670,7 +611,7 @@ export class ObjectDetector {
       this.canvas = document.createElement('canvas');
       this.canvas.width = inputW;
       this.canvas.height = inputH;
-      this.ctx = this.canvas.getContext('2d', { 
+      this.ctx = this.canvas.getContext('2d', {
         willReadFrequently: true,
         alpha: false
       })!;
@@ -679,39 +620,8 @@ export class ObjectDetector {
 
     const ctx = this.ctx;
 
-    // Fast clear
-    ctx.clearRect(0, 0, inputW, inputH);
-
-    // Calculate letterbox
-    const aspectRatio = imgWidth / imgHeight;
-    const targetAspectRatio = inputW / inputH;
-
-    let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number;
-
-    if (aspectRatio > targetAspectRatio) {
-      drawWidth = inputW;
-      drawHeight = (inputW / aspectRatio) | 0;  // Faster than Math.floor
-      offsetX = 0;
-      offsetY = ((inputH - drawHeight) / 2) | 0;
-    } else {
-      drawHeight = inputH;
-      drawWidth = (inputH * aspectRatio) | 0;
-      offsetX = ((inputW - drawWidth) / 2) | 0;
-      offsetY = 0;
-    }
-
-    // Draw directly without intermediate canvas (faster)
-    const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = imgWidth;
-    srcCanvas.height = imgHeight;
-    const srcCtx = srcCanvas.getContext('2d')!;
-    
-    const srcImageData = srcCtx.createImageData(imgWidth, imgHeight);
-    srcImageData.data.set(imageData);
-    srcCtx.putImageData(srcImageData, 0, 0);
-
-    // Draw with letterbox
-    ctx.drawImage(srcCanvas as CanvasImageSource, 0, 0, imgWidth, imgHeight, offsetX, offsetY, drawWidth, drawHeight);
+    // Letterbox into the pre-allocated target canvas.
+    const meta = letterboxToCanvas(imageData, imgWidth, imgHeight, inputW, inputH, ctx);
 
     const paddedData = ctx.getImageData(0, 0, inputW, inputH);
 
@@ -719,24 +629,24 @@ export class ObjectDetector {
     const tensor = this.tensorBuffer!;
     const len = paddedData.data.length;
     const planeSize = inputW * inputH;
-    
+
     // Unroll loop for speed (process 4 pixels at once)
     for (let i = 0; i < len; i += 16) {
       const i1 = i, i2 = i + 4, i3 = i + 8, i4 = i + 12;
       const p1 = i1 / 4, p2 = i2 / 4, p3 = i3 / 4, p4 = i4 / 4;
-      
+
       // R channel
       tensor[p1] = paddedData.data[i1] * 0.003921569;  // / 255
       tensor[p2] = paddedData.data[i2] * 0.003921569;
       tensor[p3] = paddedData.data[i3] * 0.003921569;
       tensor[p4] = paddedData.data[i4] * 0.003921569;
-      
+
       // G channel
       tensor[p1 + planeSize] = paddedData.data[i1 + 1] * 0.003921569;
       tensor[p2 + planeSize] = paddedData.data[i2 + 1] * 0.003921569;
       tensor[p3 + planeSize] = paddedData.data[i3 + 1] * 0.003921569;
       tensor[p4 + planeSize] = paddedData.data[i4 + 1] * 0.003921569;
-      
+
       // B channel
       tensor[p1 + planeSize * 2] = paddedData.data[i1 + 2] * 0.003921569;
       tensor[p2 + planeSize * 2] = paddedData.data[i2 + 2] * 0.003921569;
@@ -744,15 +654,12 @@ export class ObjectDetector {
       tensor[p4 + planeSize * 2] = paddedData.data[i4 + 2] * 0.003921569;
     }
 
-    const scaleX = imgWidth / drawWidth;
-    const scaleY = imgHeight / drawHeight;
-
     return {
       tensor,
-      paddingX: offsetX,
-      paddingY: offsetY,
-      scaleX,
-      scaleY,
+      paddingX: meta.paddingX,
+      paddingY: meta.paddingY,
+      scaleX: meta.scaleX,
+      scaleY: meta.scaleY,
     };
   }
 
@@ -812,7 +719,7 @@ export class ObjectDetector {
       const numClasses = outputShape[2] - 4;
       const [inputH, inputW] = this.config.inputSize;
       
-      console.log(`[ObjectDetector] Trying YOLOv26 format (center format) with ${numClasses} classes`);
+      log.debug(`Trying YOLOv26 format (center format) with ${numClasses} classes`);
       
       for (let i = 0; i < numDetections; i++) {
         const baseIdx = i * outputShape[2];
@@ -843,8 +750,8 @@ export class ObjectDetector {
         
         // Debug first detection
         if (i === 0) {
-          console.log(`[ObjectDetector] Raw bbox: [${output[baseIdx + numClasses]}, ${output[baseIdx + numClasses + 1]}, ${output[baseIdx + numClasses + 2]}, ${output[baseIdx + numClasses + 3]}]`);
-          console.log(`[ObjectDetector] Decoded bbox: [${x1.toFixed(1)}, ${y1.toFixed(1)}, ${x2.toFixed(1)}, ${y2.toFixed(1)}]`);
+          log.debug(`Raw bbox: [${output[baseIdx + numClasses]}, ${output[baseIdx + numClasses + 1]}, ${output[baseIdx + numClasses + 2]}, ${output[baseIdx + numClasses + 3]}]`);
+          log.debug(`Decoded bbox: [${x1.toFixed(1)}, ${y1.toFixed(1)}, ${x2.toFixed(1)}, ${y2.toFixed(1)}]`);
         }
         
         // Find best class and confidence
@@ -864,8 +771,8 @@ export class ObjectDetector {
 
         // Debug first few detections
         if (i < 5 && confidence > 0.05) {
-          console.log(`[ObjectDetector] Box ${i}: [${x1.toFixed(1)}, ${y1.toFixed(1)}, ${x2.toFixed(1)}, ${y2.toFixed(1)}]`);
-          console.log(`[ObjectDetector]   -> class=${bestClass} (${COCO_CLASSES[bestClass] || 'unknown'}), confidence=${(confidence * 100).toFixed(1)}%`);
+          log.debug(`Box ${i}: [${x1.toFixed(1)}, ${y1.toFixed(1)}, ${x2.toFixed(1)}, ${y2.toFixed(1)}]`);
+          log.debug(`  -> class=${bestClass} (${COCO_CLASSES[bestClass] || 'unknown'}), confidence=${(confidence * 100).toFixed(1)}%`);
         }
 
         if (confidence < this.config.confidence) continue;
@@ -897,10 +804,10 @@ export class ObjectDetector {
 
     // Debug logging
     if (detections.length > 0) {
-      console.log(`[ObjectDetector] ✅ Found ${detections.length} detections`);
-      console.log(`[ObjectDetector] First:`, detections[0]);
+      log.debug(`✅ Found ${detections.length} detections`);
+      log.debug('First:', detections[0]);
     } else {
-      console.log(`[ObjectDetector] ❌ No detections above threshold ${this.config.confidence}`);
+      log.debug(`❌ No detections above threshold ${this.config.confidence}`);
       // Log top 3 scores for debugging
       const topScores: number[] = [];
       const numClasses = outputShape.length === 3 ? outputShape[2] - 4 : 80;
@@ -914,7 +821,7 @@ export class ObjectDetector {
         const confidence = bestScore > 0 && bestScore <= 1 ? bestScore : 1 / (1 + Math.exp(-bestScore));
         topScores.push(confidence);
       }
-      console.log(`[ObjectDetector] Top 3 confidences: ${topScores.map(s => (s * 100).toFixed(1) + '%').join(', ')}`);
+      log.debug(`Top 3 confidences: ${topScores.map(s => (s * 100).toFixed(1) + '%').join(', ')}`);
     }
 
     // NMS
@@ -1004,13 +911,6 @@ export class ObjectDetector {
       classCounts,
       inferenceTime: Math.round(inferenceTime),
     };
-  }
-
-  /**
-   * Get statistics from last detection
-   */
-  getStats(): DetectionStats | null {
-    return null;
   }
 
   /**

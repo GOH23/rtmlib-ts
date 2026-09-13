@@ -6,3 +6,17 @@ dist/
 .cache/
 .rtmlib/
 package-lock.json
+.claude
+# Local benchmark artifacts (timings + rendered PNGs) — regenerated on demand
+bench-results/
+examples/.webm/dance_detect_pose_3d.webm
+demo
+examples
+# Locally-downloaded InstantHMR ONNX checkpoint (~80 MB).
+# Downloaded from $INSTANTHMR_MODEL_URL the first time the browser smoke
+# test runs, then cached locally by the Cache API.
+examples/instanthmr.onnx
+examples/.webm/dance_multiply.webm
+scripts
+CLAUDE.md
+commit-message.md

@@ -94,7 +94,8 @@ new PoseDetector(config?: PoseDetectorConfig)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `detModel` | `string` | optional | Path to YOLO12 detection model |
+| `detModel` | `string` | optional | Path to YOLO detection model (raw URL — wins over `yoloVersion`) |
+| `yoloVersion` | `'yolov8n' \| 'yolov12n' \| 'yolo26n'` | `'yolov12n'` | YOLO version shortcut. Resolves to a URL via `YOLO_VERSIONS`. Ignored when `detModel` is set. |
 | `poseModel` | `string` | optional | Path to RTMW pose model |
 | `detInputSize` | `[number, number]` | `[416, 416]` | Detection input size |
 | `poseInputSize` | `[number, number]` | `[384, 288]` | Pose input size |
@@ -108,8 +109,29 @@ new PoseDetector(config?: PoseDetectorConfig)
 
 If `detModel` and `poseModel` are not specified, the following default models are used:
 
-- **Detector**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx`
+- **Detector**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx` (YOLOv12n via `YOLO_VERSIONS.yolov12n`)
 - **Pose**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/rtmpose/end2end.onnx`
+
+### Picking a YOLO version
+
+Three YOLO versions are bundled (all Ultralytics ONNX exports):
+
+```typescript
+import { PoseDetector, YOLO_VERSIONS, type YoloVersion } from 'rtmlib-ts';
+
+// By name — URL is resolved from the central YOLO_VERSIONS registry
+const det = new PoseDetector({ yoloVersion: 'yolo26n', backend: 'wasm' });
+
+// Or pass a raw URL directly (always wins over yoloVersion)
+const det2 = new PoseDetector({
+  detModel: 'https://my-mirror.example/yolov8n.onnx',
+});
+```
+
+`yolov8n` and `yolov12n` use the original Ultralytics output layout
+(`[1, num_boxes, 4+class_count]`). `yolo26n` uses the newer output head
+(`[1, num_boxes, 80+4]` — class scores first, box coords last) and is
+auto-detected at runtime.
 
 ### Methods
 

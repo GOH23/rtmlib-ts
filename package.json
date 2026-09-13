@@ -1,28 +1,54 @@
 {
   "name": "rtmlib-ts",
-  "version": "0.0.5",
-  "description": "High-performance browser-based AI library for real-time object detection (YOLO12) and pose estimation (RTMW) using ONNX Runtime Web",
+  "version": "0.1.0",
+  "description": "Browser-only AI library for real-time object detection (YOLOv8n / YOLOv12n / YOLOv26n, MediaPipe EfficientDet-Lite0) and 3D pose estimation (RTMW3D-X COCO-WholeBody 133-keypoint 3D, InstantHMR MHR70 mesh) on ONNX Runtime Web — wasm, WebGL, WebGPU, WebNN.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "bundle": "node esbuild.config.mjs",
+    "demo": "npm run build && vite --config demo/vite.config.ts"
   },
   "files": [
     "dist"
   ],
   "keywords": [
     "pose-estimation",
+    "3d-pose",
+    "3d-mesh",
+    "human-pose",
     "rtmpose",
-    "dwpose",
-    "rtmo",
     "rtmw",
+    "rtmw3d",
+    "rtmo",
+    "dwpose",
+    "instanthmr",
+    "mhr",
+    "mhr70",
     "yolo",
+    "yolov8",
+    "yolov8n",
     "yolo12",
+    "yolov12n",
+    "yolo26",
+    "yolo26n",
+    "ultralytics",
+    "mediapipe",
+    "efficientdet",
     "object-detection",
     "computer-vision",
+    "browser-ml",
     "onnx",
-    "webassembly"
+    "onnxruntime",
+    "onnxruntime-web",
+    "webgpu",
+    "webgl",
+    "webnn",
+    "webassembly",
+    "wasm-threads",
+    "sharedarraybuffer",
+    "typescript"
   ],
   "author": "Based on rtmlib by Tao Jiang",
   "license": "Apache-2.0",
@@ -36,16 +62,17 @@
   "homepage": "https://github.com/GOH23/rtmlib-ts#readme",
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.32",
-    "jszip": "^3.10.1",
-    "onnxruntime-web": "^1.24.3",
-    "sharp": "^0.34.0"
+    "onnxruntime-web": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.15",
-    "next": "^16.1.6",
+    "esbuild": "^0.24.0",
+    "playwright": "^1.49.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.3"
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.21"
   }
 }

@@ -3,6 +3,9 @@
  * Based on rtmlib Python library
  */
 
+import { SKELETON_EDGES } from '../core/instanthmrGeometry';
+import type { InstantHMRPerson } from '../solution/pose3dDetector';
+
 interface KeypointInfo {
   name: string;
   id: number;
@@ -540,4 +543,196 @@ export function drawResultsOnCanvas(
   } else {
     drawPoseOnCanvas(ctx, results);
   }
+}
+
+/**
+ * Draw MHR70 mesh-recovery result on a canvas.
+ *
+ * Draws bbox + 70 keypoint dots + wrist-fan hand skeleton
+ * (wrist → third → second → first → tip per finger). Skips endpoints
+ * that fall outside the frame — the model predicts all 70 points, even
+ * the ones that lie outside the crop, and without filtering they would
+ * just stick to the frame edge.
+ *
+ * @param ctx - Canvas 2D context (already sized to source-frame dimensions).
+ * @param person - One `InstantHMRPerson` from the detector result.
+ * @param confidenceThreshold - Skip joints below this score. InstantHMR does
+ *   not emit per-kpt scores, so this filter is effectively a no-op unless the
+ *   caller pre-fills `score` on `keypoints2d`. Default: 0.
+ * @param iw - Source frame width (defaults to the canvas width).
+ * @param ih - Source frame height (defaults to the canvas height).
+ */
+export function drawMhr70OnCanvas(
+  ctx: CanvasRenderingContext2D,
+  person: InstantHMRPerson,
+  confidenceThreshold: number = 0,
+  iw?: number,
+  ih?: number,
+): void {
+  const width = iw ?? ctx.canvas.width;
+  const height = ih ?? ctx.canvas.height;
+
+  const COLOR_LEFT = '#38bdf8';   // sky-400
+  const COLOR_RIGHT = '#fb7185';  // rose-400
+  const COLOR_CENTER = '#e2e8f0'; // slate-200
+
+  const sideOf: Array<'left' | 'right' | 'center'> = [
+    'center', 'left', 'right', 'left', 'right',           // 0..4  face
+    'left', 'right',                                      // 5..6  shoulders
+    'left', 'right',                                      // 7..8  elbows
+    'left', 'right',                                      // 9..10 hips
+    'left', 'right',                                      // 11..12 knees
+    'left', 'right',                                      // 13..14 ankles
+    'left', 'left', 'left',                               // 15..17 left foot
+    'right', 'right', 'right',                            // 18..20 right foot
+    'right', 'right', 'right', 'right',                   // 21..24 right thumb chain
+    'right', 'right', 'right', 'right',                   // 25..28 right index chain
+    'right', 'right', 'right', 'right',                   // 29..32 right middle chain
+    'right', 'right', 'right', 'right',                   // 33..36 right ring chain
+    'right', 'right', 'right', 'right',                   // 37..40 right pinky chain
+    'right',                                              // 41 right wrist
+    'left', 'left', 'left', 'left',                       // 42..45 left thumb chain
+    'left', 'left', 'left', 'left',                       // 46..49 left index chain
+    'left', 'left', 'left', 'left',                       // 50..53 left middle chain
+    'left', 'left', 'left', 'left',                       // 54..57 left ring chain
+    'left', 'left', 'left', 'left',                       // 58..61 left pinky chain
+    'left',                                               // 62 left wrist
+    'left', 'right',                                      // 63..64 olecranon
+    'left', 'right',                                      // 65..66 cubital fossa
+    'left', 'right',                                      // 67..68 acromion
+    'center',                                             // 69 neck
+  ];
+
+  const colorOf = (i: number): string => {
+    const s = sideOf[i] ?? 'center';
+    return s === 'left' ? COLOR_LEFT : s === 'right' ? COLOR_RIGHT : COLOR_CENTER;
+  };
+
+  const { bbox, keypoints2d } = person;
+
+  // Bounding box.
+  ctx.strokeStyle = COLOR_CENTER;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bbox.x1, bbox.y1, bbox.x2 - bbox.x1, bbox.y2 - bbox.y1);
+
+  const label = `Person ${(bbox.confidence * 100).toFixed(0)}%`;
+  ctx.font = 'bold 12px sans-serif';
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = COLOR_CENTER;
+  ctx.fillRect(bbox.x1, bbox.y1 - 18, tw + 8, 18);
+  ctx.fillStyle = '#04202b';
+  ctx.fillText(label, bbox.x1 + 4, bbox.y1 - 4);
+
+  // Skeleton edges (wrist-fan hands per SKELETON_EDGES — matches upstream).
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  for (const [a, b] of SKELETON_EDGES) {
+    const ka = keypoints2d[a];
+    const kb = keypoints2d[b];
+    if (!ka || !kb) continue;
+    // Skip joints outside the frame.
+    const aIn = ka.x >= 0 && ka.x < width && ka.y >= 0 && ka.y < height;
+    const bIn = kb.x >= 0 && kb.x < width && kb.y >= 0 && kb.y < height;
+    if (!aIn || !bIn) continue;
+    // Confidence filter (InstantHMR doesn't emit scores; keypoints2d[k].score is undefined).
+    const scoreA = ka['score' as keyof typeof ka] as number | undefined;
+    const scoreB = kb['score' as keyof typeof kb] as number | undefined;
+    if ((scoreA ?? 1) < confidenceThreshold) continue;
+    if ((scoreB ?? 1) < confidenceThreshold) continue;
+
+    ctx.strokeStyle = colorOf(a);
+    ctx.beginPath();
+    ctx.moveTo(ka.x, ka.y);
+    ctx.lineTo(kb.x, kb.y);
+    ctx.stroke();
+  }
+
+  // Keypoint dots.
+  for (let i = 0; i < keypoints2d.length; i++) {
+    const kp = keypoints2d[i];
+    if (!kp) continue;
+    if (kp.x < 0 || kp.x >= width || kp.y < 0 || kp.y >= height) continue;
+    ctx.fillStyle = colorOf(i);
+    ctx.beginPath();
+    ctx.arc(kp.x, kp.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/**
+ * Draw a small info panel (semi-transparent rounded rectangle with one
+ * text line per entry) in the top-left corner of a canvas. Used by the
+ * demo's video-export overlay to surface the active detector presets
+ * and live FPS in the resulting WebM, but generic enough to be reused
+ * for any "render-to-video" use case (debug overlay, watermarking,
+ * etc.).
+ *
+ * Sizes scale to canvas width so the panel remains readable at 1080p+
+ * native and at smaller previews. The panel sits inside the canvas so
+ * `captureStream()` / `MediaRecorder` will encode it like any other
+ * pixel — there's no DOM compositing involved.
+ *
+ * @param ctx    Canvas 2D context (canvas must already be sized).
+ * @param iw     Canvas width in pixels.
+ * @param ih     Canvas height in pixels (currently unused — kept for API symmetry).
+ * @param lines  One entry per row. Strings are drawn verbatim.
+ * @param opts   Optional styling: `accentLine` (zero-based index into
+ *               `lines` to colour green instead of the default foreground),
+ *               `margin` (px from the top-left corner; defaults to
+ *               `iw / 120`), and `fontFamily` (defaults to a monospace
+ *               stack). All other sizes are derived from canvas width.
+ */
+export function drawInfoPanel(
+  ctx: CanvasRenderingContext2D,
+  iw: number,
+  ih: number,
+  lines: string[],
+  opts: { accentLine?: number; margin?: number; fontFamily?: string } = {},
+): void {
+  if (!lines.length) return;
+  void ih; // reserved for future vertical anchoring
+
+  const scale = iw / 1920; // 1.0 at 1080p width, ~0.5 at 540p
+  const fontSize = Math.max(18, Math.round(36 * scale));
+  const padX = Math.round(16 * scale);
+  const padY = Math.round(12 * scale);
+  const lineH = Math.round(fontSize * 1.35);
+  const cornerR = Math.round(8 * scale);
+  const margin = opts.margin ?? Math.round(16 * scale);
+  const fontFamily = opts.fontFamily ?? 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace';
+
+  ctx.save();
+  ctx.font = `600 ${fontSize}px ${fontFamily}`;
+  ctx.textBaseline = 'top';
+
+  const widths = lines.map((l) => ctx.measureText(l).width);
+  const boxW = Math.max(...widths) + padX * 2;
+  const boxH = lineH * lines.length + padY * 2;
+
+  // Rounded-rect background via four arcTo calls. Supported in every
+  // modern browser without needing ctx.roundRect.
+  const x = margin;
+  const y = margin;
+  ctx.beginPath();
+  ctx.moveTo(x + cornerR, y);
+  ctx.arcTo(x + boxW, y, x + boxW, y + boxH, cornerR);
+  ctx.arcTo(x + boxW, y + boxH, x, y + boxH, cornerR);
+  ctx.arcTo(x, y + boxH, x, y, cornerR);
+  ctx.arcTo(x, y, x + boxW, y, cornerR);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(11, 12, 16, 0.78)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+  ctx.lineWidth = Math.max(1, scale);
+  ctx.stroke();
+
+  // Foreground colours: accent green for the highlighted line,
+  // default neutral foreground for everything else.
+  const accent = '#6ee7b7';
+  const fg = '#e4e4e7';
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillStyle = i === opts.accentLine ? accent : fg;
+    ctx.fillText(lines[i], x + padX, y + padY + lineH * i);
+  }
+  ctx.restore();
 }

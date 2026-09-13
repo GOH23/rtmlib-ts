@@ -48,8 +48,21 @@ export interface ModelConfig {
 
 export type ModeType = 'performance' | 'lightweight' | 'balanced';
 
-export type BackendType = 'opencv' | 'onnxruntime' | 'openvino' | 'wasm' | 'webgl' | 'webgpu' | 'webnn';
-export type DeviceType = 'cpu' | 'gpu' | 'mps' | 'npu' | string;
+/**
+ * ONNX Runtime Web execution providers supported by `rtmlib-ts`.
+ *
+ * (The original Python `rtmlib` library also accepted `'opencv'`,
+ * `'onnxruntime'`, and `'openvino'`; those legacy strings are not
+ * meaningful in the browser runtime and have been removed.)
+ */
+export type BackendType = 'wasm' | 'webgl' | 'webgpu' | 'webnn';
+
+/**
+ * Device hint for WebNN / WebGPU. `npu` is only meaningful with WebNN.
+ * `'mps'` (Apple Metal) was inherited from the Python source but is
+ * not reachable from a browser.
+ */
+export type DeviceType = 'cpu' | 'gpu' | 'npu';
 
 export interface ImageData {
   data: Uint8Array;

@@ -1,486 +1,335 @@
 # Pose3DDetector API
 
-High-performance 3D pose estimation with YOLOX detector and RTMW3D pose model.
+Unified 3D-pose estimation. One class, ten pipelines composed from three orthogonal **required** selectors (`objectModel`, `pose3dModel`, `backend`).
 
-## Overview
-
-`Pose3DDetector` combines YOLOX object detection with RTMW3D 3D pose estimation for full-body 3D keypoint detection. This class provides 3D coordinates (x, y, z) for each keypoint instead of just 2D.
-
-## 🆕 NEW: MediaPipe + RTMW3D (FASTEST!)
-
-For the **fastest 3D pose estimation**, use `MediaPipeObject3DPoseDetector` which combines MediaPipe EfficientDet with RTMW3D:
-
-```typescript
-import { MediaPipeObject3DPoseDetector } from 'rtmlib-ts';
-
-// 2-3x faster than YOLO + RTMW3D!
-const detector = new MediaPipeObject3DPoseDetector({
-  mpScoreThreshold: 0.5,
-  poseConfidence: 0.3,
-  backend: 'webgpu',
-  personsOnly: true,
-});
-await detector.init();
-
-const result = await detector.detectFromCanvas(canvas);
-console.log(result.keypoints[0][0]); // [x, y, z] in meters
-```
-
-**Benefits of MediaPipe + RTMW3D:**
-- ⚡ **2-3x faster** than YOLO + 3D Pose
-- 🎯 **Accurate 3D pose** from RTMW3D
-- 🧠 **Fast detection** from MediaPipe EfficientDet
-- 💾 **Lower CPU/GPU load**
-
-See [MediaPipe Detector API](MEDIAPIPE_DETECTOR.md) for more details.
-
-## Installation
-
-```bash
-npm install rtmlib-ts
-```
-
-## Quick Start
-
-### Basic Usage
-
-```typescript
+```ts
 import { Pose3DDetector } from 'rtmlib-ts';
 
-// Initialize with default models (from HuggingFace)
-const detector = new Pose3DDetector();
-await detector.init();
-
-// Detect from canvas
-const result = await detector.detectFromCanvas(canvas);
-
-// Access 3D keypoints
-console.log(`Detected ${result.keypoints.length} people`);
-console.log(`3D keypoints: ${result.keypoints[0][0]}`); // [x, y, z] in meters
-```
-
-### From Canvas
-
-```typescript
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-const result = await detector.detectFromCanvas(canvas);
-
-result.keypoints.forEach((person, i) => {
-  person.forEach((kpt, j) => {
-    console.log(`Person ${i}, Keypoint ${j}: x=${kpt[0]}, y=${kpt[1]}, z=${kpt[2]}`);
-  });
+// YOLOv12 person detector → RTMW3D 17-keypoint 3D pose
+const a = new Pose3DDetector({
+  objectModel: 'yolov12n',
+  pose3dModel: 'rtmw3d',
+  backend: 'webgl',
 });
-```
+await a.init();
+const r = await a.detectFromCanvas(canvas);     // Pose3DResult — COCO17
 
-### From Video (Real-time)
-
-```typescript
-const video = document.getElementById('video') as HTMLVideoElement;
-
-video.addEventListener('play', async () => {
-  while (!video.paused && !video.ended) {
-    const result = await detector.detectFromVideo(video);
-    
-    // Process 3D keypoints
-    result.keypoints.forEach((person, i) => {
-      person.forEach((kpt, j) => {
-        // kpt = [x, y, z]
-        console.log(`Kpt ${j}: [${kpt[0].toFixed(2)}, ${kpt[1].toFixed(2)}, ${kpt[2].toFixed(2)}]`);
-      });
-    });
-    
-    await new Promise(resolve => requestAnimationFrame(resolve));
-  }
+// MediaPipe EfficientDet → RTMW3D — fastest 3D on large frames
+const b = new Pose3DDetector({
+  objectModel: 'mediapipe',
+  pose3dModel: 'rtmw3d',
+  backend: 'wasm',
 });
-```
+await b.init();
+const r2 = await b.detectFromCanvas(canvas);    // Pose3DResult
 
-### From Image Element
-
-```typescript
-const img = document.getElementById('image') as HTMLImageElement;
-const result = await detector.detectFromImage(img);
-```
-
-### From File Upload
-
-```typescript
-const fileInput = document.getElementById('file') as HTMLInputElement;
-fileInput.addEventListener('change', async (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (file) {
-    const result = await detector.detectFromFile(file);
-  }
+// YOLOv26n → InstantHMR — 70-keypoint MHR mesh (body + hands + face).
+const c = new Pose3DDetector({
+  objectModel: 'yolo26n',
+  pose3dModel: 'instanthmr',
+  backend: 'wasm',
 });
+await c.init();
+const r3 = await c.detectFromCanvas(canvas);    // InstantHMR3DResult
 ```
 
-### From Camera (Blob)
+All ten combinations run on **ONNX Runtime Web** (wasm / webgl / webgpu / webnn). There is no TFLite / LiteRT code path.
 
-```typescript
-const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-const video = document.querySelector('video');
-video.srcObject = stream;
+## Choosing a pipeline
 
-video.addEventListener('play', async () => {
-  const result = await detector.detectFromVideo(video);
-});
+The pipeline is composed from three orthogonal **required** config fields. Pick one from each axis — every combination is valid:
+
+| Field | Values | Notes |
+|---|---|---|
+| `objectModel` *(required)* | `'yolov8n' \| 'yolov12n' \| 'yolo26n' \| 'mediapipe'` | Person detector. The three `yolo*` values differ in which Ultralytics YOLO export runs; `'mediapipe'` uses EfficientDet-Lite0. |
+| `pose3dModel` *(required)* | `'rtmw3d' \| 'instanthmr'` | 3D pose model. `'rtmw3d'` returns COCO17 keypoints; `'instanthmr'` returns the MHR70 mesh + camera translation + body shape. |
+| `backend` *(required)* | `'wasm' \| 'webgl' \| 'webgpu' \| 'webnn'` | ONNX execution provider. The InstantHMR graph is incompatible with WebGL — pick `'wasm'` / `'webgpu'` / `'webnn'` when `pose3dModel === 'instanthmr'`. |
+
+### The 8 combinations
+
+| `objectModel` | `pose3dModel: 'rtmw3d'` | `pose3dModel: 'instanthmr'` |
+|---|---|---|
+| `'yolov8n'` | YOLOv8n → RTMW3D | YOLOv8n → InstantHMR |
+| `'yolov12n'` *(default)* | YOLOv12n → RTMW3D | YOLOv12n → InstantHMR |
+| `'yolo26n'` | YOLOv26n → RTMW3D | YOLOv26n → InstantHMR |
+| `'mediapipe'` | EfficientDet → RTMW3D | EfficientDet → InstantHMR |
+
+YOLO is roughly an order of magnitude faster than MediaPipe on most frames (YOLOv12n is ~10 MB / ~10 ms on multithreaded WASM vs MediaPipe's ~60 ms). MediaPipe is the right choice on very large frames where `mpInputMaxSize` downscale caps its cost.
+
+### Recommended configurations (Chrome WebGPU benchmark)
+
+Numbers below are **total median ms** for the photo fixture (`examples/photo_detect_pose_3d.png`, 335×719, 1 person) on a real Chrome browser with a discrete GPU and `crossOriginIsolated: true` (COOP+COEP, wasm threads live). Re-run with `npm run bench:chrome-webgpu`. Source JSON: `bench-results/latest.json`.
+
+| Pipeline | backend | total (ms) | speedup vs wasm |
+|---|---|---:|---:|
+| **yolov8n + rtmw3d**       | webgpu | **27.9**  | **3.87×** |
+| yolov8n + rtmw3d           | wasm   | 108.0     | — |
+| **yolov8n + instanthmr**   | webgpu | **20.4**  | **4.21×** |
+| yolov8n + instanthmr       | wasm   |  86.0     | — |
+| **yolo26n + rtmw3d**       | webgpu | **143.3** | **3.30×** |
+| yolo26n + rtmw3d           | wasm   | 472.3     | — |
+| **yolo26n + instanthmr**   | webgpu | **91.1**  | **2.81×** |
+| yolo26n + instanthmr       | wasm   | 256.0     | — |
+| yolov12n + rtmw3d          | wasm   | 556.1     | — |
+| yolov12n + rtmw3d          | webgpu | 878.4     | **0.63×** ⚠️ |
+| yolov12n + instanthmr      | wasm   | 311.0     | — |
+| yolov12n + instanthmr      | webgpu | 790.5     | **0.39×** ⚠️ |
+
+**YOLOv8n is the fastest detector on every backend × pose3d model combination.** The surprise winner — it is the smallest detector (~12 MB) and the only one whose pose3D inference time falls under the profile's 1 ms rounding floor, while still being the cheapest YOLO to run on a GPU.
+
+**Recommended combo by use case:**
+
+- **GPU available, want max speed:** `yolov8n + rtmw3d / webgpu` (COCO17 3D, **27.9 ms**) or `yolov8n + instanthmr / webgpu` (MHR70 mesh, **20.4 ms**).
+- **GPU available, want larger object coverage / multi-class:** `yolo26n + rtmw3d / webgpu` (143.3 ms) or `yolo26n + instanthmr / webgpu` (91.1 ms).
+- **WASM only:** `yolov8n + rtmw3d / wasm` (108 ms — fastest wasm combo). InstantHMR on wasm is `yolo26n` (256 ms).
+- **Very large frames:** `mediapipe + rtmw3d / wasm` with `mpInputMaxSize: 640` — the downscale caps MediaPipe detect at ~60 ms regardless of source size.
+- **Avoid:** `yolov12n + webgpu` (see Known issues below).
+
+### Known issue: YOLOv12n + WebGPU regression
+
+`objectModel: 'yolov12n'` with `backend: 'webgpu'` is **slower than the same combo on wasm** for every pose3D model in the benchmark:
+
+- `yolov12n + rtmw3d`: wasm 556 ms → webgpu 878 ms (0.63× — **1.6× slower**)
+- `yolov12n + instanthmr`: wasm 311 ms → webgpu 790 ms (0.39× — **2.5× slower**)
+
+The regression is entirely in the detector phase (yolov12n det: 138 ms wasm → 765 ms webgpu); the pose3D phase benefits from webgpu as expected. **Root cause:** YOLOv12 is an attention-based architecture (area-attention modules, large-kernel blocks). The ONNX Runtime Web webgpu EP does not have kernel-level optimizations for these ops — many fall back to a generic interpreter that compiles shaders slowly and runs them serially. YOLOv8 and YOLOv26 are CNN-only and have mature webgpu kernels.
+
+If you need webgpu, pick `yolov8n` or `yolo26n`. If you specifically want yolov12n, stay on wasm (or webgl, where yolov12n is the default and works fine).
+
+Per-stage timing breakdown:
+
+```ts
+const det = new Pose3DDetector({ objectModel: 'mediapipe', profile: true });
+await det.init();
+await det.detectFromCanvas(canvas);
+console.log(det.lastProfile);
+// { mpMs, preprocessMs, inferMs, postprocessMs, otherMs, personCount, totalMs }
 ```
 
-## API Reference
+## Configuration reference
 
-### Constructor
+```ts
+interface Pose3DDetectorConfig {
+  // ---- Pipeline selectors (orthogonal, all required) ----
+  objectModel: 'yolov8n' | 'yolov12n' | 'yolo26n' | 'mediapipe';
+  pose3dModel: 'rtmw3d' | 'instanthmr';
+  backend:     'wasm' | 'webgl' | 'webgpu' | 'webnn';
 
-```typescript
-new Pose3DDetector(config?: Pose3DDetectorConfig)
-```
+  // ---- Raw URL overrides (power users / self-hosting) ----
+  detModel?:           string;                                       // YOLO URL — wins over objectModel (when it's a yolo*)
+  poseModel?:          string;                                       // RTMW3D URL (pose3dModel='rtmw3d') OR InstantHMR URL ('instanthmr')
+  mediaPipeModelPath?: string;                                       // EfficientDet-Lite0 URL
 
-**Configuration Options:**
+  // ---- Detection tunables (apply to whichever detector objectModel picks) ----
+  detInputSize?:           [number, number];                         // default [640, 640]
+  detConfidence?:          number;                                   // default 0.45
+  nmsThreshold?:           number;                                   // default 0.7
+  mediaPipeScoreThreshold?: number;                                  // default 0.5 — ignored unless objectModel='mediapipe'
+  mediaPipeMaxResults?:    number;                                   // default -1 — ignored unless objectModel='mediapipe'
+  mpInputMaxSize?:         number;                                   // default 640 px — ignored unless objectModel='mediapipe'
+  personsOnly?:            boolean;                                  // default true — ignored unless objectModel='mediapipe'
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `detModel` | `string` | optional | Path to YOLOX detection model |
-| `poseModel` | `string` | optional | Path to RTMW3D pose model |
-| `detInputSize` | `[number, number]` | `[640, 640]` | Detection input size |
-| `poseInputSize` | `[number, number]` | `[384, 288]` | Pose input size |
-| `detConfidence` | `number` | `0.45` | Detection confidence threshold |
-| `nmsThreshold` | `number` | `0.7` | NMS IoU threshold |
-| `poseConfidence` | `number` | `0.3` | Keypoint visibility threshold |
-| `backend` | `'wasm' \| 'webgpu'` | `'wasm'` | Execution backend |
-| `cache` | `boolean` | `true` | Enable model caching |
-| `zRange` | `number` | `2.1744869` | Z-axis range in meters |
+  // ---- Pose tunables ----
+  poseInputSize?:  [number, number];                                  // RTMW3D: [288, 384] — ignored for instanthmr
+  poseConfidence?: number;                                           // RTMW3D: 0.3 — ignored for instanthmr
+  zRange?:         number;                                           // RTMW3D: 2.1744869 — ignored for instanthmr
+  bboxExpansion?:  number;                                           // instanthmr: 1.2 — only consulted when pose3dModel='instanthmr'
 
-### Default Models
+  // ---- instanthmr-only: detector stride ----
+  detectorStride?: number;                                           // default 1 — only consulted when pose3dModel='instanthmr'
 
-If `detModel` and `poseModel` are not specified, the following default models are used:
+  // ---- ONNX runtime knobs (all combinations) ----
+  deviceType?:      'cpu' | 'gpu' | 'npu';
+  powerPreference?: 'default' | 'low-power' | 'high-performance';
+  webnnOptions?:    WebNNProviderOptions;
 
-- **Detector**: `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx`
-- **Pose**: `https://huggingface.co/Soykaf/RTMW3D-x/resolve/main/onnx/rtmw3d-x_8xb64_cocktail14-384x288-b0a0eab7_20240626.onnx`
-
-### Methods
-
-#### `init()`
-
-Initialize both detection and pose models.
-
-```typescript
-await detector.init();
-```
-
-#### `detectFromCanvas()`
-
-Detect 3D poses from HTMLCanvasElement.
-
-```typescript
-async detectFromCanvas(canvas: HTMLCanvasElement): Promise<Wholebody3DResult>
-```
-
-#### `detectFromVideo()`
-
-Detect 3D poses from HTMLVideoElement (for real-time video processing).
-
-```typescript
-async detectFromVideo(
-  video: HTMLVideoElement,
-  targetCanvas?: HTMLCanvasElement
-): Promise<Wholebody3DResult>
-```
-
-#### `detectFromImage()`
-
-Detect 3D poses from HTMLImageElement.
-
-```typescript
-async detectFromImage(
-  image: HTMLImageElement,
-  targetCanvas?: HTMLCanvasElement
-): Promise<Wholebody3DResult>
-```
-
-#### `detectFromFile()`
-
-Detect 3D poses from File object (for file uploads).
-
-```typescript
-async detectFromFile(
-  file: File,
-  targetCanvas?: HTMLCanvasElement
-): Promise<Wholebody3DResult>
-```
-
-#### `detectFromBlob()`
-
-Detect 3D poses from Blob (for camera capture or downloads).
-
-```typescript
-async detectFromBlob(
-  blob: Blob,
-  targetCanvas?: HTMLCanvasElement
-): Promise<Wholebody3DResult>
-```
-
-#### `detect()`
-
-Low-level method for raw image data.
-
-```typescript
-async detect(
-  imageData: Uint8Array,
-  width: number,
-  height: number
-): Promise<Wholebody3DResult>
-```
-
-#### `dispose()`
-
-Release resources and models.
-
-```typescript
-detector.dispose();
-```
-
-### Types
-
-#### `Wholebody3DResult`
-
-```typescript
-interface Wholebody3DResult {
-  keypoints: number[][][];      // [numPeople][numKeypoints][3] - 3D coordinates
-  scores: number[][];           // [numPeople][numKeypoints] - confidence scores
-  keypointsSimcc: number[][][]; // [numPeople][numKeypoints][3] - normalized SimCC coords
-  keypoints2d: number[][][];    // [numPeople][numKeypoints][2] - 2D projection
+  // ---- Shared ----
+  cache?:           boolean;                                         // default true — see "Cache + COEP" below
+  profile?:         boolean;                                         // default false → lastProfile
+  onInitProgress?:  (stage: string, detail?: string) => void;
 }
 ```
 
-#### `Pose3DStats`
+Fields are silently ignored when they don't apply to the chosen pipeline (e.g. `mediaPipeScoreThreshold` is a no-op when `objectModel !== 'mediapipe'`, `bboxExpansion` is only consulted when `pose3dModel === 'instanthmr'`).
 
-Performance statistics attached to results:
+### No-URL usage
 
-```typescript
-interface Pose3DStats {
-  personCount: number;
-  detTime: number;      // Detection time (ms)
-  poseTime: number;     // Pose estimation time (ms)
-  totalTime: number;    // Total processing time (ms)
+The library ships sensible defaults — HuggingFace for the ONNX weights and Google Storage for the MediaPipe TFLite. You almost never pass model URLs to the detector constructors:
+
+```ts
+// No URLs anywhere — library defaults Just Work.
+const det1 = new Pose3DDetector({ objectModel: 'yolov12n', pose3dModel: 'rtmw3d', backend: 'webgl' });
+const det2 = new Pose3DDetector({ objectModel: 'yolo26n',   pose3dModel: 'rtmw3d', backend: 'webgl' });
+const det3 = new Pose3DDetector({ objectModel: 'yolov12n',  pose3dModel: 'instanthmr', backend: 'wasm' });
+const det4 = new Pose3DDetector({ objectModel: 'mediapipe',  pose3dModel: 'rtmw3d', backend: 'wasm' });
+```
+
+### Picking a YOLO version
+
+`objectModel: 'yolov8n' | 'yolov12n' | 'yolo26n'` is wired to the central `YOLO_VERSIONS` map exported from the library:
+
+```ts
+import { YOLO_VERSIONS, type YoloVersion } from 'rtmlib-ts';
+
+// YOLO_VERSIONS.yolov8n  → /yolo/yolov8n.onnx
+// YOLO_VERSIONS.yolov12n → /yolo/yolov12n.onnx  (default; broadest backend coverage)
+// YOLO_VERSIONS.yolo26n  → /yolo/yolo26n.onnx  (fastest on modern hardware in headless tests)
+```
+
+If both `detModel` (raw URL) and `objectModel` (enum) are given, the raw URL wins. The same `YOLO_VERSIONS` map is shared with `ObjectDetector` and `PoseDetector`, so the same `yoloVersion` enum resolves consistently across the three detectors.
+
+### Detector stride (instanthmr only)
+
+`detectorStride?: number` (default `1`) controls how often the person detector runs. On `n`-th frames the detector runs as usual; on the skipped frames the last detected bboxes are reused (slightly expanded by `0.05 × (stride − 1)`), and the InstantHMR pose model continues to run on every frame. Matches the original InstantHMR repo's `PosePipeline.detector_stride`:
+
+> "The detector is by far the dominant cost on most hardware, so stride 2–3 is the single biggest knob for end-to-end FPS."
+
+Useful when the detector dominates per-frame time (e.g. single-threaded WASM, mobile). On modern hardware with a fast YOLO version (e.g. `yolo26n` on multithreaded WASM) the detector is small enough that stride adds no win — leave it at `1`.
+
+### Hot-swapping the person detector (instanthmr only)
+
+`setObjectModel(model)` switches the instanthmr pipeline's person detector at runtime without rebuilding the `Pose3DDetector`. Both the YOLO detector and the MediaPipe detector are eagerly constructed when `pose3dModel === 'instanthmr'` (the YOLO URL resolves from `model`); the first swap may block on a lazy-init of the not-yet-loaded detector; subsequent swaps are nearly free:
+
+```ts
+const det = new Pose3DDetector({
+  objectModel: 'yolov12n',
+  pose3dModel: 'instanthmr',
+  backend:     'wasm',
+  profile:     true,
+});
+await det.init();
+await det.detectFromCanvas(canvas);                  // uses yolov12n
+await det.setObjectModel('mediapipe');               // hot-swap to MediaPipe
+await det.detectFromCanvas(canvas);                  // next frame uses MediaPipe
+await det.setObjectModel('yolo26n');                 // hot-swap to YOLOv26n
+```
+
+Throws for `pose3dModel === 'rtmw3d'` — that pipeline only constructs the single detector the constructor picked, so the hot-swap isn't possible. Rebuild the `Pose3DDetector` with a new config to change `objectModel` for the rtmw3d pipelines.
+
+Stride cannot be hot-swapped (it's baked into the construction-time state) — change `detectorStride` requires a fresh `Pose3DDetector`.
+
+## Result types
+
+### `Pose3DResult` — `pose3dModel: 'rtmw3d'`
+
+```ts
+interface Pose3DResult {
+  keypoints:      number[][][];     // [N][K][3]      — 3D in metres (K = model's keypoint count, 133 for cocktail14)
+  scores:         number[][];       // [N][K]         — confidence [0, 1]
+  keypointsSimcc: number[][][];     // [N][K][3]      — normalised SimCC peaks [0, 1]
+  keypoints2d:    number[][][];     // [N][K][2]      — 2D in source pixels
+  stats?:         Pose3DStats;      // timing breakdown
 }
 ```
 
-Access via: `(result as any).stats`
+### `InstantHMR3DResult` — `pose3dModel: 'instanthmr'`
 
-### Keypoint Structure
-
-The model outputs 17 COCO keypoints per person:
-
-| Index | Name | 3D Output |
-|-------|------|-----------|
-| 0 | nose | `[x, y, z]` |
-| 1 | left_eye | `[x, y, z]` |
-| 2 | right_eye | `[x, y, z]` |
-| 3 | left_ear | `[x, y, z]` |
-| 4 | right_ear | `[x, y, z]` |
-| 5 | left_shoulder | `[x, y, z]` |
-| 6 | right_shoulder | `[x, y, z]` |
-| 7 | left_elbow | `[x, y, z]` |
-| 8 | right_elbow | `[x, y, z]` |
-| 9 | left_wrist | `[x, y, z]` |
-| 10 | right_wrist | `[x, y, z]` |
-| 11 | left_hip | `[x, y, z]` |
-| 12 | right_hip | `[x, y, z]` |
-| 13 | left_knee | `[x, y, z]` |
-| 14 | right_knee | `[x, y, z]` |
-| 15 | left_ankle | `[x, y, z]` |
-| 16 | right_ankle | `[x, y, z]` |
-
-## Complete Example
-
-```typescript
-import { Pose3DDetector } from 'rtmlib-ts';
-
-async function main() {
-  // Initialize with default models
-  const detector = new Pose3DDetector();
-  console.log('Loading models...');
-  await detector.init();
-  console.log('Models loaded!');
-
-  // Load image
-  const img = new Image();
-  img.src = 'person.jpg';
-  await new Promise(resolve => img.onload = resolve);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(img, 0, 0);
-
-  // Detect 3D poses
-  const startTime = performance.now();
-  const result = await detector.detectFromCanvas(canvas);
-  const endTime = performance.now();
-
-  const stats = (result as any).stats;
-  console.log(`Detected ${stats.personCount} people in ${stats.totalTime}ms`);
-  console.log(`  Detection: ${stats.detTime}ms`);
-  console.log(`  3D Pose: ${stats.poseTime}ms`);
-
-  // Process 3D results
-  result.keypoints.forEach((person, personIdx) => {
-    console.log(`\nPerson ${personIdx + 1}:`);
-    person.forEach((kpt, kptIdx) => {
-      const score = result.scores[personIdx][kptIdx];
-      if (score > 0.5) {
-        console.log(
-          `  Keypoint ${kptIdx}: [${kpt[0].toFixed(3)}, ${kpt[1].toFixed(3)}, ${kpt[2].toFixed(3)}] ` +
-          `(score: ${score.toFixed(3)})`
-        );
-      }
-    });
-  });
-
-  // Draw 2D projection on canvas
-  result.keypoints2d.forEach((person, personIdx) => {
-    const color = `hsl(${personIdx * 60}, 80%, 50%)`;
-    
-    person.forEach(([x, y], kptIdx) => {
-      const score = result.scores[personIdx][kptIdx];
-      if (score > 0.5) {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
-  });
-
-  // Display result
-  document.body.appendChild(canvas);
+```ts
+interface InstantHMR3DResult {
+  persons: InstantHMRPerson[];
+  stats?:  Pose3DStats & { otherMs?: number };
 }
 
-main();
-```
-
-## Performance Optimization
-
-### 1. Use WebGPU Backend (if available)
-
-```typescript
-const detector = new Pose3DDetector({
-  backend: 'webgpu',  // Faster than WASM
-});
-```
-
-### 2. Adjust Input Sizes
-
-Smaller input sizes = faster inference:
-
-```typescript
-const detector = new Pose3DDetector({
-  detInputSize: [416, 416],  // Faster detection
-  poseInputSize: [256, 192], // Faster pose estimation
-});
-```
-
-### 3. Tune Confidence Thresholds
-
-Higher thresholds = fewer detections but faster:
-
-```typescript
-const detector = new Pose3DDetector({
-  detConfidence: 0.6,    // Skip low-confidence detections
-  poseConfidence: 0.4,   // Only show confident keypoints
-});
-```
-
-### 4. Reuse Detector Instance
-
-```typescript
-// ✅ Reuse same instance for multiple frames
-const detector = new Pose3DDetector();
-await detector.init();
-
-for (const frame of videoFrames) {
-  const result = await detector.detect(frame.data, frame.width, frame.height);
+interface InstantHMRPerson {
+  bbox:        { x1: number; y1: number; x2: number; y2: number; confidence: number };
+  keypoints3d: InstantHMRKeypoint3D[];                              // 70 entries, camera frame
+  keypoints2d: Array<{ x: number; y: number; id: number; name: string }>;
+  mhr:         Float32Array;                                         // length 204 (34 joints × 6D)
+  shape:       Float32Array;                                         // length 45 (body + head + hands)
+  cam:         [number, number, number];                             // camera translation, metres
 }
 ```
 
-### 5. Process Every Nth Frame
+The COCO17 2D skeleton for `Pose3DResult` is exported as `coco17`; the MHR70 layout for InstantHMR is exported as `mhr70` (and `drawMhr70OnCanvas` for quick render).
 
-For real-time video, process every few frames:
+## API surface
 
-```typescript
-let frameCount = 0;
-const processEvery = 3; // Process every 3rd frame
+```ts
+class Pose3DDetector<T extends { pose3dModel: Pose3DModel } = { pose3dModel: Pose3DModel }> {
+  objectModel: Pose3DObjectModel;                    // resolved from config; mutable via setObjectModel
+  readonly pose3dModel: Pose3DModel;                 // resolved from config
+  lastProfile: Pose3DProfile | null;                 // populated when profile: true
 
-video.addEventListener('play', async () => {
-  while (!video.paused && !video.ended) {
-    frameCount++;
-    if (frameCount % processEvery === 0) {
-      const result = await detector.detectFromVideo(video);
-      // Process result
-    }
-    await new Promise(resolve => requestAnimationFrame(resolve));
-  }
+  constructor(config: Pose3DDetectorConfig);
+
+  init(): Promise<void>;
+  detectFromCanvas(canvas: HTMLCanvasElement): Promise<Pose3DDetectorResult<T>>;
+  detectFromVideo(video: HTMLVideoElement, target?: HTMLCanvasElement): Promise<Pose3DDetectorResult<T>>;
+  detectFromImage(image: HTMLImageElement, target?: HTMLCanvasElement): Promise<Pose3DDetectorResult<T>>;
+  detectFromBitmap(bitmap: ImageBitmap, target?: HTMLCanvasElement): Promise<Pose3DDetectorResult<T>>;
+  detectFromFile(file: File, target?: HTMLCanvasElement): Promise<Pose3DDetectorResult<T>>;
+  detectFromBlob(blob: Blob, target?: HTMLCanvasElement): Promise<Pose3DDetectorResult<T>>;
+
+  // Lower-level: pose3dModel='rtmw3d' only. Throws for instanthmr.
+  detect(rgba: Uint8Array, width: number, height: number): Promise<Pose3DResult>;
+
+  // Hot-swap person detector for instanthmr (lazy-init). Throws for rtmw3d.
+  setObjectModel(model: Pose3DObjectModel): Promise<void>;
+
+  // Updates MediaPipe score threshold (no-op when objectModel !== 'mediapipe').
+  setScoreThreshold(threshold: number): Promise<void>;
+
+  dispose(): void;
+}
+```
+
+TS conditional narrowing on the generic means `detectFromCanvas` is typed correctly for whichever `pose3dModel` was passed to the constructor — `Pose3DDetector<{ pose3dModel: 'instanthmr' }>` returns `InstantHMR3DResult`, the default / `'rtmw3d'` returns `Pose3DResult`. No runtime type checks at call sites.
+
+## Default model URLs
+
+| Model | URL |
+|---|---|
+| **YOLOv8n**  | `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov8n.onnx` |
+| **YOLOv12n** *(default)* | `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolov12n.onnx` |
+| **YOLOv26n** | `https://huggingface.co/demon2233/rtmlib-ts/resolve/main/yolo/yolo26n.onnx` |
+| **RTMW3D-X ONNX** | `https://huggingface.co/Soykaf/RTMW3D-x/resolve/main/onnx/rtmw3d-x_8xb64_cocktail14-384x288-b0a0eab7_20240626.onnx` |
+| **MediaPipe EfficientDet-Lite0** | `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite` |
+| **InstantHMR** | `https://huggingface.co/momolesang/InstantHMR/resolve/main/instanthmr.onnx` (exported as `INSTANTHMR_MODEL_URL`) |
+
+Override any of them via `detModel: '…'` / `poseModel: '…'` / `mediaPipeModelPath: '…'`. The YOLO URLs come from the central `YOLO_VERSIONS` map exported from `rtmlib-ts`. Mirror URLs and self-hosted exports are first-class.
+
+### Cache + COEP
+
+`cache: true` (the default) persists model weights in the Cache API (ONNX) or IndexedDB (MediaPipe `.tflite`). The library uses a cache-first strategy in `getCachedModel()` — every fetch first checks `cache.match(url)`, and only on a miss falls back to the network.
+
+This is what makes the COEP (`Cross-Origin-Embedder-Policy: require-corp`) + HuggingFace combination viable for warm-cache users. The HF CDN doesn't send `Cross-Origin-Resource-Policy`, so a fresh cross-origin fetch under COEP lands with a zero-length body. On a warm cache, the response is served same-origin, COEP passes, and ONNX Runtime Web can use the weights. On a cold cache the first fetch may fail with `EmptyModelResponseError`; the failed response is NOT persisted, so the next reload retries the network fetch — which usually succeeds once the cache is warm.
+
+## Custom ONNX models
+
+```ts
+import { YOLO_VERSIONS } from 'rtmlib-ts';
+
+// Self-hosted mirror, MediaPipe + RTMW3D
+const det = new Pose3DDetector({
+  objectModel:        'mediapipe',
+  pose3dModel:        'rtmw3d',
+  backend:            'wasm',
+  mediaPipeModelPath: 'https://my-mirror.example/efficientdet_lite0.tflite',
+  poseModel:          'https://my-mirror.example/rtmw3d-x.onnx',
+  cache:              true,
+});
+
+// Pick a YOLO version by name (no need to know URLs)
+const det2 = new Pose3DDetector({
+  objectModel: 'yolo26n',
+  pose3dModel: 'rtmw3d',
+  backend:     'webgpu',
 });
 ```
 
-## Browser Support
+## Browser support
 
-| Browser | Version | Backend |
-|---------|---------|---------|
-| Chrome | 94+ | WASM, WebGPU |
-| Edge | 94+ | WASM, WebGPU |
-| Firefox | 95+ | WASM |
-| Safari | 16.4+ | WASM |
+| Pipeline | WASM | WebGL | WebGPU | WebNN |
+|---|---|---|---|---|
+| Any `objectModel` + `pose3dModel: 'rtmw3d'` | ✅ | ✅ (default) | ✅ | ✅ |
+| Any `objectModel` + `pose3dModel: 'instanthmr'` | ✅ (default) | ⚠️ graph-incompatible | ✅ (real GPU required) | ✅ |
 
-## Performance Benchmarks
+WASM threads (5–7× speedup) require cross-origin isolation — set `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on the HTML response.
 
-Typical inference times on M1 MacBook Pro:
+### Cache write resilience
 
-| Configuration | Detection | 3D Pose (per person) | Total (3 people) |
-|--------------|-----------|---------------------|------------------|
-| WASM, 640×640 + 384×288 | 120ms | 45ms | 255ms |
-| WASM, 416×416 + 256×192 | 60ms | 25ms | 135ms |
-| WebGPU, 640×640 + 384×288 | 50ms | 20ms | 110ms |
-
-## Troubleshooting
-
-### "Model loading failed"
-
-- Ensure models are accessible via HTTP (not `file://` protocol)
-- Use a local server: `python -m http.server 8080`
-- Check CORS headers
-
-### "Slow inference"
-
-- Switch to WebGPU backend if available
-- Reduce input sizes
-- Increase confidence thresholds
-- Process every Nth frame instead of all frames
-
-### "No detections"
-
-- Lower `detConfidence` threshold
-- Ensure person is visible and reasonably sized
-- Check image format (RGB, not grayscale)
-
-### "Z-coordinate seems wrong"
-
-- Z values are in metric scale (meters)
-- Range is approximately -1.0 to 1.0 meters from camera
-- Z is relative to the person's center
-
-## Custom Models
-
-You can use any compatible ONNX models:
-
-```typescript
-const detector = new Pose3DDetector({
-  detModel: 'path/to/custom_yolox.onnx',
-  poseModel: 'path/to/custom_rtmw3d.onnx',
-  detInputSize: [640, 640],
-  poseInputSize: [384, 288],
-});
-```
+Some browsers' Cache API implementations refuse to persist very large blobs (RTMW3D-X is ~370 MB; on Chrome 141 the `cache.put()` call throws `QuotaExceededError` or `Unexpected internal error`). `src/core/modelCache.ts` wraps the `cache.put()` in a try/catch — init succeeds with the freshly-fetched bytes, and a `console.warn` line is printed so you know the next page load will re-download. The fix has been in place since the 0.1.0 benchmark pass.
 
 ## License
 
-Apache 2.0
+Apache 2.0.
