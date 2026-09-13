@@ -230,7 +230,6 @@ rtmlib-ts/
 Based on [rtmlib](https://github.com/Tau-J/rtmlib) by Tao Jiang  
 YOLO12 by [Ultralytics](https://ultralytics.com)  
 RTMW by [OpenMMLab](https://openmmlab.com)  
-InstantHMR / MHR70 by [Meta](https://github.com/facebookresearch/instanthmr)  
 MediaPipe by [Google](https://developers.google.com/mediapipe)
 
 ## Documentation
